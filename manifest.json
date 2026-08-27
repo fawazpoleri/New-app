@@ -1,0 +1,16 @@
+{
+  "name": "Kaapi POS — Cafe Billing",
+  "short_name": "Kaapi POS",
+  "description": "Lightweight cafe billing app with table management, KOT and bill printing, and sales reports.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#171110",
+  "theme_color": "#171110",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
