@@ -1,6 +1,6 @@
 {
-  "name": "Kaapi POS — Cafe Billing",
-  "short_name": "Kaapi POS",
+  "name": "Froolla— Cafe Billing",
+  "short_name": "Froolla",
   "description": "Lightweight cafe billing app with table management, KOT and bill printing, and sales reports.",
   "start_url": "./index.html",
   "scope": "./",
