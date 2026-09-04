@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="Froolla">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <!-- Supabase client (cloud database). Config values are set in SUPABASE_URL / SUPABASE_ANON_KEY below. -->
@@ -2464,7 +2464,16 @@
     if(lastDismiss && daysSinceDismiss < 7) return;
 
     let deferredPrompt = null;
-    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const ua = navigator.userAgent;
+    const isIOSDevice = /iPhone|iPad|iPod/i.test(ua);
+    // Only real Safari supports "Add to Home Screen" from the Share sheet.
+    // Exclude Chrome/Firefox/Edge on iOS (they're all Safari-engine wrappers
+    // without that menu item) and in-app browsers (Instagram, FB, TikTok, etc.)
+    const isOtherIOSBrowser = /CriOS|FxiOS|EdgiOS|OPiOS|mercury/i.test(ua);
+    const isInAppBrowser = /FBAN|FBAV|Instagram|Line\/|MicroMessenger|TikTok|Snapchat/i.test(ua);
+    const isIOS = isIOSDevice && !isOtherIOSBrowser && !isInAppBrowser;
+    // iOS device but not a browser that can install — skip silently, no banner at all.
+    if(isIOSDevice && !isIOS) return;
 
     function showBanner({onInstall, iosHint}){
       const banner = document.createElement("div");
