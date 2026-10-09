@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Move data from the old app</title>
+<style>
+ body{font-family:system-ui,sans-serif;max-width:640px;margin:0 auto;padding:18px;background:#16130f;color:#f1ebe0;line-height:1.5}
+ h1{font-size:20px;margin:0 0 4px} h2{font-size:15px;margin:22px 0 8px;color:#e8b04a}
+ .card{background:#211c16;border:1px solid #3a3228;border-radius:12px;padding:14px;margin-bottom:12px}
+ label{display:block;font-size:12.5px;color:#b9ad9a;margin:10px 0 4px}
+ input[type=text],input[type=password]{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #3a3228;background:#16130f;color:inherit;font-size:14px}
+ button,.btn{display:block;width:100%;box-sizing:border-box;text-align:center;margin-top:12px;padding:12px;border-radius:10px;border:0;background:#e8b04a;color:#2a1d05;font-weight:700;font-size:15px;cursor:pointer}
+ button:disabled{opacity:.45;cursor:default} .alt{background:#2e271e;color:#f1ebe0;border:1px solid #3a3228}
+ .small{font-size:12.5px;color:#b9ad9a} .err{color:#ff9a86} .ok{color:#8fd19e} ul{padding-left:18px;margin:8px 0} li{margin:3px 0}
+</style></head><body>
+<h1>Move data from the old app</h1>
+<div class="small">Reads the old app's data and makes a backup file for the new app. Nothing is changed in the old project.</div>
+
+<h2>Step 1 &middot; Get the old data</h2>
+<div class="card">
+ <b>Option A: read it directly</b>
+ <label>Old Supabase project URL</label><input type="text" id="url" placeholder="https://xxxx.supabase.co" autocomplete="off">
+ <label>Old project's public (anon / publishable) key</label><input type="password" id="key" autocomplete="off">
+ <button id="readBtn">Read from old project</button>
+</div>
+<div class="card">
+ <b>Option B: use an exported file</b>
+ <div class="small">In the old Supabase dashboard: Table Editor &rarr; <code>kv</code> &rarr; Export &rarr; JSON.</div>
+ <input type="file" id="file" accept=".json,application/json" style="display:none">
+ <label for="file" class="btn alt">Choose exported kv file</label>
+</div>
+
+<div id="result"></div>
+
+<script src="old-to-backup.js"></script>
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  let doc = null;
+  const esc = (s) => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const sha256 = async (t) => {
+    if(!(window.crypto && window.crypto.subtle)) return null;
+    const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t));
+    return Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2,"0")).join("");
+  };
+  function show(html){ $("result").innerHTML = html; }
+
+  async function run(kv){
+    show('<div class="small">Converting&hellip;</div>');
+    try{
+      const out = await OldToBackup.convert(kv, { sha256 });
+      doc = out.doc;
+      const c = doc.counts;
+      show(`<h2>Step 2 &middot; Check</h2><div class="card">
+        <div class="ok"><b>Ready.</b> ${doc.paidSales} sales (total ${doc.paidTotal.toFixed(2)}), ${c.products} menu items in ${c.categories} categories, ${c.dining_tables} tables, ${c.business_days} business days${c.orders - doc.paidSales ? ", " + (c.orders - doc.paidSales) + " open order(s)" : ""}.</div>
+        ${out.warnings.length ? "<div class='small' style='margin-top:8px'>Please note:</div><ul class='small'>" + out.warnings.map(w => "<li>"+esc(w)+"</li>").join("") + "</ul>" : ""}
+        <button id="dl">Download backup file</button></div>
+        <h2>Step 3 &middot; Import into the new app</h2><div class="card small">
+        Sign in to the <b>new app</b> as Admin &rarr; <b>Backup</b> tab &rarr; <b>Choose backup file</b> &rarr; pick this file &rarr; type RESTORE.<br><br>
+        <b>This replaces everything currently in the new app</b> (menu, tables, sales). A safety copy is downloaded first. User accounts are not touched.</div>`);
+      $("dl").onclick = () => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([JSON.stringify(doc)], {type:"application/json"}));
+        a.download = "old-app-data-for-import.json"; document.body.appendChild(a); a.click(); a.remove();
+      };
+    }catch(e){ show('<div class="card err">'+esc(e.message || e)+'</div>'); }
+  }
+
+  $("readBtn").onclick = async () => {
+    const url = $("url").value.trim().replace(/\/+$/,""), key = $("key").value.trim();
+    if(!/^https:\/\/.+/.test(url) || !key){ show('<div class="card err">Enter the old project URL and key.</div>'); return; }
+    show('<div class="small">Reading&hellip;</div>');
+    try{
+      const r = await fetch(url + "/rest/v1/kv?select=key,value&key=in.(cafe-config,cafe-orders,cafe-deleted-orders)", { headers: { apikey: key, Authorization: "Bearer " + key } });
+      if(!r.ok) throw new Error("The old project said: " + r.status + " " + (await r.text()).slice(0,160));
+      await run(await r.json());
+    }catch(e){ show('<div class="card err">Could not read the old project. ' + esc(e.message || e) + '</div>'); }
+  };
+  $("file").onchange = async (e) => {
+    const f = e.target.files[0]; e.target.value = ""; if(!f) return;
+    try{ await run(JSON.parse(await f.text())); }
+    catch(err){ show('<div class="card err">That file is not valid JSON.</div>'); }
+  };
+})();
+</script></body></html>
