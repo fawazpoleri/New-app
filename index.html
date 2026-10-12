@@ -2533,6 +2533,7 @@
     const lines = order.items.map(l=>`
       <div class="cart-line">
         <div class="cart-line-top">
+          ${(()=>{ const ci = state.config.items.find(i=>i.id===l.itemId); return ci && ci.image ? `<img class="item-thumb" style="margin-right:0;" src="${ci.image}" alt="">` : ""; })()}
           <div style="flex:1;">
             <div class="clname">${escapeHtml(l.name)}</div>
             <div class="clprice">${money(l.price)} each</div>
