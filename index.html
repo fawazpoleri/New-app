@@ -185,6 +185,9 @@
   .list-row .ractions{display:flex; gap:6px; flex-shrink:0;}
   .icon-btn{width:34px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center; background:var(--surface-2); font-size:15px;}
   .icon-btn:active{transform:scale(0.92);}
+  .icon-btn[disabled]{opacity:.3; pointer-events:none;}
+  .ractions .move-btn{font-size:13px; color:var(--text-dim);}
+  .order-hint{font-size:12px; color:var(--text-faint); margin:-4px 0 12px;}
   .cat-chip-header{font-size:12px; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-faint); margin:18px 0 8px; font-weight:700;}
   .cat-chip-header:first-child{margin-top:0;}
 
@@ -1506,13 +1509,26 @@
     return Array.from(byId.values());
   }
 
+  // Category display order: each category carries a numeric `order`. Billing chips, the item list
+  // and the kitchen "by category" view all follow the array order, so we keep the array sorted.
+  function sortCategoriesByOrder(list){
+    return (list||[])
+      .map((c,i)=>({c,i}))
+      .sort((a,b)=>{
+        const ao = typeof a.c.order==="number" ? a.c.order : 1e9;
+        const bo = typeof b.c.order==="number" ? b.c.order : 1e9;
+        return (ao-bo) || (a.i-b.i);
+      })
+      .map(x=>x.c);
+  }
+
   function mergeConfig(local, cloud){
     if(!cloud) return local;
     const merged = {...cloud};
     const delCat = Array.from(new Set([...(local.deletedCategoryIds||[]), ...(cloud.deletedCategoryIds||[])]));
     const delItem = Array.from(new Set([...(local.deletedItemIds||[]), ...(cloud.deletedItemIds||[])]));
     const delTable = Array.from(new Set([...(local.deletedTableIds||[]), ...(cloud.deletedTableIds||[])]));
-    merged.categories = mergeConfigRecords(local.categories, cloud.categories, delCat);
+    merged.categories = sortCategoriesByOrder(mergeConfigRecords(local.categories, cloud.categories, delCat));
     merged.items = mergeConfigRecords(local.items, cloud.items, delItem);
     merged.tables = mergeConfigRecords(local.tables, cloud.tables, delTable);
     merged.deletedCategoryIds = delCat;
@@ -1692,6 +1708,7 @@
     if(!cfg.ingredients){ cfg.ingredients = []; needsSave = true; }
     if(!cfg.deletedIngredientIds){ cfg.deletedIngredientIds = []; needsSave = true; }
     if(needsSave) await storeSet("cafe-config", cfg);
+    cfg.categories = sortCategoriesByOrder(cfg.categories);
     state.config = cfg;
     try{ rowMode = !!(DBO && supabaseClient && await DBO.available()); }
     catch(e){ showOfflineGate(); return; }          // can't tell which storage mode applies -> don't guess
@@ -2138,7 +2155,7 @@
 
   function renderCategoriesList(){
     const cats = state.config.categories;
-    let rows = cats.length ? cats.map(c=>{
+    let rows = cats.length ? (cats.length>1 ? `<div class="order-hint">Use ▲ ▼ to set the order categories appear in billing and kitchen.</div>` : "") + cats.map((c,idx)=>{
       const count = itemsInCategory(c.id).length;
       return `
         <div class="list-row">
@@ -2147,6 +2164,8 @@
             <div class="rsub">${count} item${count===1?"":"s"}</div>
           </div>
           <div class="ractions">
+            <button class="icon-btn move-btn" data-move-category="${c.id}" data-dir="-1" ${idx===0?"disabled":""} aria-label="Move up">▲</button>
+            <button class="icon-btn move-btn" data-move-category="${c.id}" data-dir="1" ${idx===cats.length-1?"disabled":""} aria-label="Move down">▼</button>
             <button class="icon-btn" data-edit-category="${c.id}">✏️</button>
             <button class="icon-btn" data-delete-category="${c.id}">🗑️</button>
           </div>
@@ -3727,7 +3746,8 @@
         const c = state.config.categories.find(c=>c.id===data.id);
         c.name = name; c.updatedAt = Date.now();
       } else {
-        state.config.categories.push({id:uid(), name, updatedAt:Date.now()});
+        const maxOrder = state.config.categories.reduce((m,c)=>Math.max(m, typeof c.order==="number"?c.order:-1), -1);
+        state.config.categories.push({id:uid(), name, order:Math.max(maxOrder+1, state.config.categories.length), updatedAt:Date.now()});
       }
     } else if(type === "item"){
       const name = document.getElementById("mItemName").value.trim();
@@ -3903,6 +3923,19 @@
     persistConfig();
     render();
     closeTopOverlay();
+  }
+
+  function moveCategory(id, dir){
+    const cats = state.config.categories;
+    const i = cats.findIndex(c=>c.id===id);
+    const j = i + dir;
+    if(i<0 || j<0 || j>=cats.length) return;
+    [cats[i], cats[j]] = [cats[j], cats[i]];
+    const now = Date.now();
+    cats.forEach((c,idx)=>{
+      if(c.order !== idx){ c.order = idx; c.updatedAt = now; }
+    });
+    persistConfig(); render();
   }
 
   function deleteCategory(id){
@@ -4358,6 +4391,8 @@
     if(e.target.closest("[data-add-category]")) return openModal("category", {});
     const editCat = e.target.closest("[data-edit-category]");
     if(editCat) return openModal("category", state.config.categories.find(c=>c.id===editCat.dataset.editCategory));
+    const moveCat = e.target.closest("[data-move-category]");
+    if(moveCat) return moveCategory(moveCat.dataset.moveCategory, parseInt(moveCat.dataset.dir,10));
     const delCat = e.target.closest("[data-delete-category]");
     if(delCat) return deleteCategory(delCat.dataset.deleteCategory);
 
