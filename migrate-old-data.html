@@ -24,8 +24,9 @@
 <div class="card">
  <b>Option B: use an exported file</b>
  <div class="small">In the old Supabase dashboard: Table Editor &rarr; <code>kv</code> &rarr; Export &rarr; JSON.</div>
- <input type="file" id="file" accept=".json,application/json" style="display:none">
- <label for="file" class="btn alt">Choose exported kv file</label>
+ <div class="small">Also export table <code>pos_orders</code> (same way). Select <b>both</b> files together.</div>
+ <input type="file" id="file" accept=".json,application/json" multiple style="display:none">
+ <label for="file" class="btn alt">Choose exported kv + pos_orders files</label>
 </div>
 
 <div id="result"></div>
@@ -41,15 +42,40 @@
     const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t));
     return Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2,"0")).join("");
   };
+  // Newer old-app versions keep orders in table pos_orders (one row per order). The kv "cafe-orders"
+  // entry is then frozen at the moment of the first switch, so it misses every later bill.
+  function mergePos(kv, pos){
+    const map = {};
+    (Array.isArray(kv) ? kv : []).forEach(r => { if(r && typeof r.key === "string") map[r.key] = r.value; });
+    Object.keys(map).forEach(k => { if(typeof map[k] === "string"){ try{ map[k] = JSON.parse(map[k]); }catch(_){} } });
+    if(!pos || !pos.length) return { kv: map, fromPos: 0, fromKv: Array.isArray(map["cafe-orders"]) ? map["cafe-orders"].length : 0 };
+    const byId = new Map(), dead = new Set((Array.isArray(map["cafe-deleted-orders"]) ? map["cafe-deleted-orders"] : []).map(String));
+    (Array.isArray(map["cafe-orders"]) ? map["cafe-orders"] : []).forEach(o => { if(o && o.id != null) byId.set(String(o.id), o); });
+    const fromKv = byId.size;
+    pos.forEach(r => {
+      if(!r || r.id == null) return;
+      const id = String(r.id);
+      if(r.deleted){ dead.add(id); byId.delete(id); return; }
+      let d = r.data; if(typeof d === "string"){ try{ d = JSON.parse(d); }catch(_){ return; } }
+      if(d && typeof d === "object") { byId.set(id, { ...d, id }); dead.delete(id); }   // the row is newer than the frozen kv copy
+    });
+    map["cafe-orders"] = [...byId.values()];
+    map["cafe-deleted-orders"] = [...dead];
+    return { kv: map, fromPos: pos.length, fromKv };
+  }
+  let lastNote = "";
   function show(html){ $("result").innerHTML = html; }
 
-  async function run(kv){
+  async function run(kvRows, posRows){
+    const m = mergePos(kvRows, posRows), kv = m.kv;
+    lastNote = posRows && posRows.length ? `Orders read from the pos_orders table: ${m.fromPos} (the frozen kv copy had ${m.fromKv}).` : "";
     show('<div class="small">Converting&hellip;</div>');
     try{
       const out = await OldToBackup.convert(kv, { sha256 });
       doc = out.doc;
       const c = doc.counts;
       show(`<h2>Step 2 &middot; Check</h2><div class="card">
+        <div class="small" style="margin-bottom:6px">${esc(lastNote)}</div>
         <div class="ok"><b>Ready.</b> ${doc.paidSales} sales (total ${doc.paidTotal.toFixed(2)}), ${c.products} menu items in ${c.categories} categories, ${c.dining_tables} tables, ${c.business_days} business days${c.orders - doc.paidSales ? ", " + (c.orders - doc.paidSales) + " open order(s)" : ""}.</div>
         ${out.warnings.length ? "<div class='small' style='margin-top:8px'>Please note:</div><ul class='small'>" + out.warnings.map(w => "<li>"+esc(w)+"</li>").join("") + "</ul>" : ""}
         <button id="dl">Download backup file</button></div>
@@ -71,13 +97,30 @@
     try{
       const r = await fetch(url + "/rest/v1/kv?select=key,value&key=in.(cafe-config,cafe-orders,cafe-deleted-orders)", { headers: { apikey: key, Authorization: "Bearer " + key } });
       if(!r.ok) throw new Error("The old project said: " + r.status + " " + (await r.text()).slice(0,160));
-      await run(await r.json());
+      const kvRows = await r.json();
+      const pos = []; let missing = false;
+      for(let from = 0;; from += 1000){
+        const pr = await fetch(url + "/rest/v1/pos_orders?select=id,data,deleted&order=id", { headers: { apikey: key, Authorization: "Bearer " + key, Range: from + "-" + (from + 999) } });
+        if(pr.status === 404 || pr.status === 400){ missing = true; break; }
+        if(!pr.ok) throw new Error("pos_orders: " + pr.status + " " + (await pr.text()).slice(0,160));
+        const part = await pr.json(); pos.push(...part);
+        if(part.length < 1000) break;
+      }
+      await run(kvRows, pos);
     }catch(e){ show('<div class="card err">Could not read the old project. ' + esc(e.message || e) + '</div>'); }
   };
   $("file").onchange = async (e) => {
-    const f = e.target.files[0]; e.target.value = ""; if(!f) return;
-    try{ await run(JSON.parse(await f.text())); }
-    catch(err){ show('<div class="card err">That file is not valid JSON.</div>'); }
+    const files = Array.from(e.target.files); e.target.value = ""; if(!files.length) return;
+    try{
+      let kvRows = [], pos = [];
+      for(const f of files){
+        const j = JSON.parse(await f.text());
+        if(Array.isArray(j) && j.length && j[0] && typeof j[0].key === "string") kvRows.push(...j);
+        else if(Array.isArray(j) && j.length && j[0] && "data" in j[0] && "id" in j[0]) pos.push(...j);
+        else if(j && typeof j === "object" && !Array.isArray(j)) Object.keys(j).forEach(k => kvRows.push({ key: k, value: j[k] }));
+      }
+      await run(kvRows, pos);
+    }catch(err){ show('<div class="card err">Could not read that file: ' + esc(err.message || err) + '</div>'); }
   };
 })();
 </script></body></html>
