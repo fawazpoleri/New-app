@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Froolla – Purchase List & Order List</title>
+<style>
+:root{
+  --bg:#fff7ec; --card:#ffffff; --ink:#2b1d14; --muted:#7a6a5d; --line:#ecd9c3;
+  --accent:#e8590c; --wa:#1fa855; --wa-ink:#fff;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){--bg:#1b130e;--card:#271b14;--ink:#f6e9da;--muted:#b9a592;--line:#43322a;--accent:#ff8a3d}
+}
+:root[data-theme="dark"]{--bg:#1b130e;--card:#271b14;--ink:#f6e9da;--muted:#b9a592;--line:#43322a;--accent:#ff8a3d}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Trebuchet MS","Segoe UI",system-ui,sans-serif;line-height:1.4}
+.wrap{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:1.25rem;margin:8px 0 12px;color:var(--accent)}
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+.tab{flex:1;background:transparent;border:1px solid var(--line);color:var(--ink)}
+.tab[aria-selected="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+label{font-weight:600;display:block;margin-bottom:6px}
+input{font:inherit;color:inherit;background:transparent;border:1px solid var(--line);border-radius:8px;padding:10px;width:100%;min-width:0}
+input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.row{margin-bottom:14px}
+.head,.item{display:grid;grid-template-columns:30px 1fr 90px;gap:8px;align-items:center}
+.w .head,.w .item{grid-template-columns:1fr 90px}
+.head{font-weight:700;color:var(--muted);font-size:.85rem;padding:0 0 6px}
+.item{margin-bottom:8px}
+.num{text-align:center;color:var(--muted);font-weight:600}
+.name{padding:6px 2px;overflow-wrap:anywhere}
+.name small{display:block;color:var(--muted);font-weight:400}
+.item.has .name{font-weight:700}
+.sec{display:flex;justify-content:space-between;align-items:center;font-weight:700;color:var(--accent);margin:16px 0 8px;font-size:.95rem}
+.sec button{padding:6px 12px;font-size:.85rem}
+.actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}
+button{font:inherit;font-weight:700;border:0;border-radius:10px;padding:12px 16px;cursor:pointer}
+.wa{background:var(--wa);color:var(--wa-ink);flex:1;min-width:200px}
+.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.hint{color:var(--muted);font-size:.8rem;margin-top:10px}
+.hide{display:none}
+
+.hrow{display:flex;justify-content:space-between;align-items:center}
+.hrow button{padding:6px 12px;font-size:.85rem}
+.del{display:none;background:transparent;color:#d33;padding:2px 8px;font-size:1rem;margin-left:6px}
+body.manage .del{display:inline-block}
+.name{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.addf{display:flex;gap:6px;margin-bottom:10px}
+.addf input.u2{width:70px;flex:none}
+.addf button{padding:8px 12px;background:var(--accent);color:#fff}
+.save{color:var(--muted);font-size:.75rem;margin-top:8px}
+body.embed h1{display:none}
+body.embed .wrap{padding-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hrow"><h1>🛒 FROOLLA</h1><button class="ghost" id="mg">✏️ Manage</button></div>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="t-d" aria-selected="true">Next day purchase</button>
+    <button class="tab" role="tab" id="t-w" aria-selected="false">Weekly order list</button>
+  </div>
+
+  <div class="card" id="daily">
+    <div class="row"><label for="dd">📅 Purchase Date</label><input type="date" id="dd"></div>
+    <div class="head"><span>No.</span><span>Item Name</span><span>Quantity</span></div>
+    <div id="ditems"></div>
+    <div class="row" style="margin-top:14px"><label for="dby">📝 Prepared By</label><input type="text" id="dby" placeholder="Name"></div>
+    <div class="actions">
+      <button class="wa" id="dshare">Share on WhatsApp</button>
+      <button class="ghost" id="dclear">Clear</button>
+    </div>
+    <div class="hint">Only items with a quantity are shared.</div>
+  </div>
+
+  <div class="card w hide" id="weekly">
+    <div class="row"><label for="wd">📅 Order Date</label><input type="date" id="wd"></div>
+    <div class="head"><span>Item</span><span>Quantity</span></div>
+    <div id="witems"></div>
+    <div class="row" style="margin-top:14px"><label for="wby">📝 Prepared By</label><input type="text" id="wby" placeholder="Name"></div>
+    <div class="actions">
+      <button class="wa" id="wshare">Share on WhatsApp</button>
+      <button class="ghost" id="wclear">Clear</button>
+    </div>
+    <div class="hint">Only items with a quantity are shared.</div>
+  </div>
+</div>
+<script>
+if(location.search.indexOf("theme=dark")>-1)document.documentElement.setAttribute("data-theme","dark");
+document.addEventListener("DOMContentLoaded",()=>{if(location.search.indexOf("embed")>-1)document.body.classList.add("embed");});
+const $=id=>document.getElementById(id);
+function ymd(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function fmt(v){if(!v)return '__ / __ / ____';const [y,m,d]=v.split('-');return d+' / '+m+' / '+y;}
+const now=new Date(),tom=new Date();tom.setDate(tom.getDate()+1);
+$('dd').value=ymd(tom);$('wd').value=ymd(now);
+function share(text){window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank','noopener');}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+/* ---------- local DB (localStorage) ---------- */
+const KEY='froolla_catalog_v1', KBY='froolla_prepared_by';
+const DEF={
+daily:[
+["Grocery & Kitchen",["Sugar","Milk","Maida","Corn flour","Macaroni","Eggs","Bread","Sunflower oil","Chicken","Sprite"]],
+["Fruits & Vegetables",["Mosambi","Apple","Watermelon","Muskmelon","Grapes","Papaya","Cucumber","Tomato","Iceberg lettuce","Lemon","Pineapple","Pomegranate","Mango","Chikoo","Carrot","Onion","Mint leaves"]],
+["Dairy, Spreads & Drink Mixes",["Dairy Milk","Biscoff","Coffee powder","KitKat","Oreo","Milo powder"]]],
+weekly:[
+["Packing Items",[["Foil paper","pcs"],["Fork","pack"],["Juice glass","pcs"],["Loaded pack","pcs"],["Packing cover large","pack"],["Packing cover small","pack"],["Sandwich paper","pcs"],["Spoon","pack"],["Straw","pack"],["Tissue","pcs"],["Waste cover","pcs"]]],
+["Pulp",[["Avocado pulp","pcs"],["Chikku (Sapota)","kg"],["Mango pulp","pcs"],["Strawberry pulp","pcs"],["Tender Coconut pulp","pcs"]]],
+["Dry Fruits & Nuts",[["Cashew","g"],["Dates","g"]]],
+["Syrups",[["Blue Curacao Syrup","ml"],["Bubblegum Syrup","ml"],["Chocolate Syrup","ml"],["Green Apple mojito","ml"],["Mint mojito","ml"],["Mojito flavour syrup","ml"],["Passion Fruit Syrup","ml"],["Peach Syrup","ml"],["Raspberry Syrup","ml"],["Strawberry Syrup","ml"],["Watermelon mojito syrup","ml"]]],
+["Sauces",[["1000 island sauce","pcs"],["Cheese sauce","pcs"],["Chipotle sauce","pcs"],["Ketchup bottle","ml"],["Ketchup sachet","pcs"],["Mayonaise sachet","pcs"],["Mayonnaise sauce","pcs"],["Peri Peri Sauce","pcs"]]],
+["Frozen Items",[["Butter block","pcs"],["Cheese Slice","pcs"],["Chicken strips","pack"],["French Fries","pcs"],["Ice cream mango","pcs"],["Ice Cream vanilla","pcs"],["Ice cubes","kg"],["Paneer cube","pcs"],["Wrap / Tortilla","pcs"]]]]};
+let DB;
+try{DB=JSON.parse(localStorage.getItem(KEY));}catch(e){DB=null;}
+if(!DB||!DB.daily||!DB.weekly)DB=JSON.parse(JSON.stringify(DEF));
+let saved=true;
+function persist(){try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){saved=false;}}
+persist();
+try{$('dby').value=$('wby').value=localStorage.getItem(KBY)||'';}catch(e){}
+['dby','wby'].forEach(id=>$(id).addEventListener('input',e=>{
+  $('dby').value=$('wby').value=e.target.value;
+  try{localStorage.setItem(KBY,e.target.value);}catch(x){}
+}));
+document.querySelectorAll('.hint').forEach(h=>{h.textContent+=' New items are saved on this device.';});
+
+/* tabs + manage */
+function tab(w){
+  $('daily').classList.toggle('hide',w);$('weekly').classList.toggle('hide',!w);
+  $('t-d').setAttribute('aria-selected',!w);$('t-w').setAttribute('aria-selected',w);
+}
+$('t-d').onclick=()=>tab(false);$('t-w').onclick=()=>tab(true);
+$('mg').onclick=()=>{const on=document.body.classList.toggle('manage');$('mg').textContent=on?'✅ Done':'✏️ Manage';};
+
+/* ---------- render ---------- */
+function snapshot(box,cls){const m={};box.querySelectorAll('.item').forEach(r=>{const k=r.dataset.k;const q=r.querySelector('.'+cls).value;if(q)m[k]=q;});return m;}
+function renderD(){
+  const box=$('ditems'),keep=snapshot(box,'q');box.innerHTML='';
+  DB.daily.forEach(([t,list],ci)=>{
+    const h=document.createElement('div');h.className='sec';
+    h.innerHTML='<span>'+esc(t)+' <span style="color:var(--muted);font-weight:400">'+list.length+'</span></span>';
+    const b=document.createElement('button');b.className='ghost';b.textContent='+ Add';h.appendChild(b);box.appendChild(h);
+    const f=document.createElement('div');f.className='addf hide';
+    f.innerHTML='<input type="text" placeholder="New item name" aria-label="New item name"><button>Save</button>';
+    box.appendChild(f);
+    const add=()=>{const v=f.querySelector('input').value.trim();if(!v)return;
+      if(!list.some(n=>n.toLowerCase()===v.toLowerCase()))list.push(v);persist();renderD();};
+    b.onclick=()=>{f.classList.toggle('hide');f.querySelector('input').focus();};
+    f.querySelector('button').onclick=add;
+    f.querySelector('input').addEventListener('keydown',e=>{if(e.key==='Enter')add();});
+    const grp=document.createElement('div');box.appendChild(grp);
+    list.forEach((n,ii)=>{
+      const d=document.createElement('div');d.className='item';d.dataset.k=ci+'|'+n;
+      d.innerHTML='<span class="num"></span><span class="name"><span class="n-t">'+esc(n)+'</span><button class="del" aria-label="Delete '+esc(n)+'">✕</button></span><input type="text" class="q" placeholder="Qty" aria-label="'+esc(n)+' quantity">';
+      const q=d.querySelector('.q');if(keep[d.dataset.k]){q.value=keep[d.dataset.k];d.classList.add('has');}
+      q.addEventListener('input',e=>d.classList.toggle('has',!!e.target.value.trim()));
+      d.querySelector('.del').onclick=()=>{if(confirm('Delete "'+n+'"?')){list.splice(ii,1);persist();renderD();}};
+      grp.appendChild(d);
+    });
+  });
+  let i=0;box.querySelectorAll('.item').forEach(r=>{r.querySelector('.num').textContent=++i;});
+}
+function renderW(){
+  const box=$('witems'),keep=snapshot(box,'c');box.innerHTML='';
+  DB.weekly.forEach(([t,list],ci)=>{
+    const h=document.createElement('div');h.className='sec';
+    h.innerHTML='<span>'+esc(t)+' <span style="color:var(--muted);font-weight:400">'+list.length+'</span></span>';
+    const b=document.createElement('button');b.className='ghost';b.textContent='+ Add';h.appendChild(b);box.appendChild(h);
+    const f=document.createElement('div');f.className='addf hide';
+    f.innerHTML='<input type="text" placeholder="New item name" aria-label="New item name"><input type="text" class="u2" placeholder="Unit" aria-label="Unit"><button>Save</button>';
+    box.appendChild(f);
+    const add=()=>{const v=f.querySelector('input').value.trim(),u=f.querySelector('.u2').value.trim()||'pcs';if(!v)return;
+      if(!list.some(x=>x[0].toLowerCase()===v.toLowerCase()))list.push([v,u]);persist();renderW();};
+    b.onclick=()=>{f.classList.toggle('hide');f.querySelector('input').focus();};
+    f.querySelector('button').onclick=add;
+    f.querySelectorAll('input').forEach(i=>i.addEventListener('keydown',e=>{if(e.key==='Enter')add();}));
+    const grp=document.createElement('div');grp.dataset.cat=t;box.appendChild(grp);
+    list.forEach(([n,u],ii)=>{
+      const d=document.createElement('div');d.className='item';d.dataset.k=ci+'|'+n;
+      d.innerHTML='<span class="name"><span><span class="n-t">'+esc(n)+'</span><small class="u">'+esc(u)+'</small></span><button class="del" aria-label="Delete '+esc(n)+'">✕</button></span><input type="text" class="c" inputmode="decimal" placeholder="Qty" aria-label="'+esc(n)+' quantity">';
+      const c=d.querySelector('.c');if(keep[d.dataset.k]){c.value=keep[d.dataset.k];d.classList.add('has');}
+      c.addEventListener('input',e=>d.classList.toggle('has',!!e.target.value.trim()));
+      d.querySelector('.del').onclick=()=>{if(confirm('Delete "'+n+'"?')){list.splice(ii,1);persist();renderW();}};
+      grp.appendChild(d);
+    });
+  });
+}
+renderD();renderW();
+
+/* ---------- share / clear ---------- */
+$('dshare').onclick=()=>{
+  const lines=[];
+  document.querySelectorAll('#ditems .item').forEach(r=>{
+    const q=r.querySelector('.q').value.trim(),n=r.querySelector('.n-t').textContent;
+    if(q)lines.push((lines.length+1)+'. '+n+' – '+q);
+  });
+  share('🛒 *FROOLLA – NEXT DAY PURCHASE LIST*\n\n📅 Purchase Date: '+fmt($('dd').value)+'\n\n*No.  Item Name – Quantity*\n'+(lines.length?lines.join('\n'):'(no items)')+'\n\n📝 Prepared By: '+($('dby').value.trim()||'__________'));
+};
+$('dclear').onclick=()=>{
+  document.querySelectorAll('#ditems .q').forEach(e=>e.value='');
+  document.querySelectorAll('#ditems .item').forEach(r=>r.classList.remove('has'));
+};
+$('wshare').onclick=()=>{
+  let out=[],total=0;
+  document.querySelectorAll('#witems [data-cat]').forEach(g=>{
+    const lines=[];
+    g.querySelectorAll('.item').forEach(r=>{
+      const c=r.querySelector('.c').value.trim();if(!c)return;
+      lines.push((lines.length+1)+'. '+r.querySelector('.n-t').textContent+' ('+r.querySelector('.u').textContent+') – '+c);
+    });
+    if(lines.length){total+=lines.length;out.push('*'+g.dataset.cat+'*\n'+lines.join('\n'));}
+  });
+  share('📦 *FROOLLA – ORDER LIST*\n\n📅 Order Date: '+fmt($('wd').value)+'\n\n'+(total?out.join('\n\n'):'(no items)')+'\n\n📝 Prepared By: '+($('wby').value.trim()||'__________'));
+};
+$('wclear').onclick=()=>{
+  document.querySelectorAll('#witems .c').forEach(e=>e.value='');
+  document.querySelectorAll('#witems .item').forEach(r=>r.classList.remove('has'));
+};
+</script>
+</body>
+</html>
