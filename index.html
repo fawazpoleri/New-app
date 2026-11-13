@@ -2418,13 +2418,11 @@
           <div class="db-status">${isOpen ? "🟢 Open" : "⚪ Closed"}</div>
           <div class="db-sub">${isOpen ? "Since " + fmtDateTime(day.openedAt) : fmtDateTime(day.openedAt) + " → " + fmtDateTime(day.closedAt)}</div>
         </div>
-        ${isOpen ? `<button class="btn btn-outline" id="closeDayBtn">Close day</button>` : ""}
       </div>`;
     const actions = `
       <div class="cat-chip-header">Actions</div>
       <button class="btn btn-outline btn-block" data-view-day-bills="${day.id}">🧾 View bills of this day</button>
-      <button class="btn btn-outline btn-block" style="margin-top:8px;" data-download-bizday="${day.id}">⬇️ Download PDF</button>
-      ${canRevertBusinessDay(day) ? `<button class="btn btn-outline btn-block" style="margin-top:8px;" data-revert-day="${day.id}">↩️ Revert closing (mistakenly closed)</button>` : ""}`;
+      <button class="btn btn-outline btn-block" style="margin-top:8px;" data-download-bizday="${day.id}">⬇️ Download PDF</button>`;
     return dayPickerHtml(days, day, "bizDaySelect", "data-day-step")
       + status + summaryHtml(summarize(orders)) + renderTopItems(orders) + renderUnsoldItems(orders) + actions;
   }
@@ -2536,7 +2534,8 @@
       <div class="cat-chip-header">Actions</div>
       <button class="btn btn-amber btn-block" data-share-closing="${day.id}">📤 Share on WhatsApp</button>
       <button class="btn btn-outline btn-block" style="margin-top:8px;" data-download-bizday="${day.id}">⬇️ Download PDF</button>
-      <button class="btn btn-outline btn-block" style="margin-top:8px;" data-view-day-bills="${day.id}">🧾 View bills of this day</button>`;
+      <button class="btn btn-outline btn-block" style="margin-top:8px;" data-view-day-bills="${day.id}">🧾 View bills of this day</button>
+      ${canRevertBusinessDay(day) ? `<button class="btn btn-outline btn-block" style="margin-top:8px;" data-revert-day="${day.id}">↩️ Revert closing (mistakenly closed)</button>` : ""}`;
     return dayPickerHtml(days, day, "bizDaySelect", "data-day-step") + banner + stats + online + actions;
   }
   function buildClosingShareText(day){
