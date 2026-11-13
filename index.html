@@ -2535,7 +2535,7 @@
     const actions = `
       <div class="cat-chip-header">Actions</div>
       <button class="btn btn-amber btn-block" data-share-closing="${day.id}">📤 Share on WhatsApp</button>
-      <button class="btn btn-outline btn-block" style="margin-top:8px;" data-download-bizday="${day.id}">⬇️ Download PDF</button>
+      <button class="btn btn-outline btn-block" style="margin-top:8px;" data-download-closing="${day.id}">⬇️ Download closing report (PDF)</button>
       <button class="btn btn-outline btn-block" style="margin-top:8px;" data-view-day-bills="${day.id}">🧾 View bills of this day</button>
       ${canRevertBusinessDay(day) ? `<button class="btn btn-outline btn-block" style="margin-top:8px;" data-revert-day="${day.id}">↩️ Revert closing (mistakenly closed)</button>` : ""}`;
     return dayPickerHtml(days, day, "bizDaySelect", "data-day-step") + banner + stats + online + actions;
@@ -2570,6 +2570,148 @@
     lines.push("", bar, "", "💰 *GRAND TOTAL: "+money(r2(sm.total + onTotal))+"*");
     return lines.join("\n");
   }
+  /* ---- Closing ledger PDF (Reports → Closing → Download) ---- */
+  const LEDGER_CSS = `
+    *{box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+    body{margin:0; background:#fff; color:#2b1d14; font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;}
+    .lg{max-width:760px; margin:0 auto; padding:0 0 10mm; font-size:12px; line-height:1.45;}
+    .lg-head{background:linear-gradient(120deg,#3b1f10 0%,#7a3a12 55%,#e8590c 100%); color:#fff; padding:20px 22px 16px; border-radius:0 0 18px 18px; display:flex; justify-content:space-between; align-items:flex-end; gap:14px;}
+    .lg-brand{font-size:26px; font-weight:800; letter-spacing:.5px;}
+    .lg-meta{font-size:11px; opacity:.85; margin-top:2px;}
+    .lg-title{text-align:right;}
+    .lg-title b{display:block; font-size:13px; letter-spacing:2px; color:#ffd9a8;}
+    .lg-title span{display:block; font-size:19px; font-weight:700; margin-top:2px;}
+    .lg-chip{display:inline-block; margin-top:6px; padding:2px 10px; border-radius:20px; font-size:10.5px; font-weight:700; background:#ffffff26; border:1px solid #ffffff66;}
+    .lg-period{text-align:center; font-size:11px; color:#7a6a5d; margin:10px 0 12px;}
+    .lg-body{padding:0 18px;}
+    .kpis{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:12px;}
+    .kpi{border-radius:12px; padding:11px 12px; color:#fff;}
+    .kpi span{display:block; font-size:10px; letter-spacing:.8px; text-transform:uppercase; opacity:.9;}
+    .kpi b{display:block; font-size:19px; margin-top:3px;}
+    .k-total{background:linear-gradient(135deg,#e8590c,#f59f00);} .k-orders{background:linear-gradient(135deg,#495057,#868e96);}
+    .k-cash{background:linear-gradient(135deg,#2b8a3e,#51cf66);} .k-upi{background:linear-gradient(135deg,#1864ab,#4dabf7);}
+    .split{display:flex; height:10px; border-radius:6px; overflow:hidden; background:#eee; margin:0 0 4px;}
+    .split i{display:block; height:100%;} .split .sc{background:#2b8a3e;} .split .su{background:#1c7ed6;}
+    .split-l{display:flex; justify-content:space-between; font-size:10.5px; color:#7a6a5d; margin-bottom:14px;}
+    h2{margin:16px 0 6px; font-size:12.5px; letter-spacing:1.4px; text-transform:uppercase; color:#7a3a12; display:flex; align-items:center; gap:8px;}
+    h2:before{content:""; width:6px; height:16px; border-radius:3px; background:#e8590c;}
+    table{width:100%; border-collapse:collapse; border:1px solid #ecd9c3; border-radius:8px; overflow:hidden;}
+    thead{display:table-header-group;} tr{page-break-inside:avoid;}
+    th{background:#3b1f10; color:#ffe3c2; font-size:10.5px; letter-spacing:.8px; text-transform:uppercase; text-align:left; padding:7px 8px;}
+    td{padding:6px 8px; border-bottom:1px solid #f1e4d2; font-size:12px;}
+    tbody tr:nth-child(even) td{background:#fff8ee;}
+    .r{text-align:right;} .c{text-align:center;} .mut{color:#7a6a5d;}
+    tr.band td{background:#ffe8cc !important; color:#7a3a12; font-weight:800; letter-spacing:.8px; font-size:11px; text-transform:uppercase; border-bottom:1px solid #f2c791;}
+    tr.band.on td{background:#e5dbff !important; color:#5f3dc4; border-bottom-color:#cfbffb;}
+    tr.sub td{background:#fff1dc !important; font-weight:800; border-top:2px solid #e8590c;}
+    tr.sub.on td{background:#f1ebff !important; border-top-color:#7048e8;}
+    tr.grand td{background:#5a2d14 !important; color:#ffd9a8; font-weight:800; font-size:15px; padding:11px 8px; border:0;}
+    tfoot td{background:#3b1f10 !important; color:#ffe3c2; font-weight:800; border:0;}
+    .pill{display:inline-block; padding:1px 8px; border-radius:10px; font-size:10px; font-weight:800; color:#fff;}
+    .p-cash{background:#2b8a3e;} .p-upi{background:#1c7ed6;} .p-mixed{background:#e8590c;}
+    .sig{display:flex; justify-content:space-between; gap:30px; margin-top:34px; padding:0 6px;}
+    .sig div{flex:1; border-top:1.5px solid #7a3a12; padding-top:5px; text-align:center; font-size:10.5px; color:#7a6a5d;}
+    .foot{text-align:center; font-size:10px; color:#a08f80; margin-top:14px;}
+    @page{ size:A4; margin:0; }
+    @media print{ .lg{max-width:none;} }`;
+
+  function billCashUpi(o){
+    const pay = o.payment || {};
+    const cash = pay.method === "cash" ? (pay.total || o.total) : (pay.cash || 0);
+    const upi  = pay.method === "upi"  ? (pay.total || o.total) : (pay.upi  || 0);
+    return {cash, upi};
+  }
+  function buildClosingLedgerHtml(day){
+    const orders = ordersInDays([day]).slice().reverse();   // oldest first
+    const sm = summarize(orders);
+    const cfg = state.config.settings || {};
+    const on = onlineForDay(day);
+    const onTotal = on.reduce((t,o)=>t+(Number(o.amount)||0),0);
+    const m = n => money(r2(n));
+    const pct = sm.total > 0 ? Math.round(sm.cash / sm.total * 100) : 0;
+    const status = day.closedAt ? "CLOSED" : "OPEN";
+    const period = fmtDateTime(day.openedAt) + " → " + (day.closedAt ? fmtDateTime(day.closedAt) : "now");
+
+    // items sold
+    const items = {};
+    orders.forEach(o => o.items.forEach(l => {
+      const it = items[l.name] || (items[l.name] = {qty:0, amt:0});
+      it.qty += l.qty; it.amt += l.price * l.qty;
+    }));
+    const itemNames = Object.keys(items).sort((a,b)=>items[b].qty - items[a].qty);
+    const itemRows = itemNames.map((n,i)=>`<tr><td class="c mut">${i+1}</td><td>${escapeHtml(n)}</td><td class="c">${items[n].qty}</td><td class="r">${m(items[n].amt)}</td></tr>`).join("");
+    const itemQty = itemNames.reduce((t,n)=>t+items[n].qty,0), itemAmt = itemNames.reduce((t,n)=>t+items[n].amt,0);
+
+    // bills
+    const billRows = orders.map((o,i)=>{
+      const {cash, upi} = billCashUpi(o);
+      const meth = (o.payment && o.payment.method) || "cash";
+      return `<tr><td class="c mut">${i+1}</td><td>#${o.invoiceNo||"—"}</td><td>${fmtTime(o.paidAt)}</td><td>${escapeHtml(o.tableName||"")}</td>
+        <td class="c"><span class="pill p-${meth==="upi"?"upi":meth==="cash"?"cash":"mixed"}">${meth==="upi"?"UPI":meth==="cash"?"CASH":"SPLIT"}</span></td>
+        <td class="r">${cash ? m(cash) : "—"}</td><td class="r">${upi ? m(upi) : "—"}</td><td class="r"><b>${m(o.total)}</b></td></tr>`;
+    }).join("");
+
+    // sales ledger
+    const onRows = on.slice().sort((a,b)=>String(a.platform||"z").localeCompare(String(b.platform||"z"))).map(o => `<tr><td>${platLabel(o.platform)} sales</td><td class="mut">${o.from===o.to ? fmtYmd(o.from) : fmtYmd(o.from)+" → "+fmtYmd(o.to)}</td><td class="r">${m(o.amount)}</td></tr>`).join("");
+    const ledger = `
+      <table>
+        <thead><tr><th>Particulars</th><th>Details</th><th class="r">Amount (₹)</th></tr></thead>
+        <tbody>
+          <tr class="band"><td colspan="3">Shop sales</td></tr>
+          <tr><td>Cash sale</td><td class="mut">Cash received</td><td class="r">${m(sm.cash)}</td></tr>
+          <tr><td>UPI / GPay sale</td><td class="mut">Digital received</td><td class="r">${m(sm.upi)}</td></tr>
+          ${sm.discount > 0 ? `<tr><td>Discounts given</td><td class="mut">Already deducted</td><td class="r">${m(sm.discount)}</td></tr>` : ""}
+          <tr class="sub"><td colspan="2">Total shop sales (${sm.count} bills)</td><td class="r">${m(sm.total)}</td></tr>
+          ${on.length ? `<tr class="band on"><td colspan="3">Online sales · Swiggy / Zomato</td></tr>${onRows}
+          <tr class="sub on"><td colspan="2">Total online sales</td><td class="r">${m(onTotal)}</td></tr>` : ""}
+          <tr class="grand"><td colspan="2">GRAND TOTAL</td><td class="r">${m(sm.total + onTotal)}</td></tr>
+        </tbody>
+      </table>`;
+
+    return `<div class="lg">
+      <div class="lg-head">
+        <div><div class="lg-brand">${escapeHtml(cfg.cafeName || "Cafe")}</div>
+          ${cfg.address ? `<div class="lg-meta">${escapeHtml(cfg.address)}</div>` : ""}${cfg.phone ? `<div class="lg-meta">${escapeHtml(cfg.phone)}</div>` : ""}</div>
+        <div class="lg-title"><b>DAILY CLOSING LEDGER</b><span>${fmtSp(dayDateStr(day))}</span><div class="lg-chip">${status}</div></div>
+      </div>
+      <div class="lg-period">${period}</div>
+      <div class="lg-body">
+        <div class="kpis">
+          <div class="kpi k-total"><span>Shop sale</span><b>${m(sm.total)}</b></div>
+          <div class="kpi k-orders"><span>Orders</span><b>${sm.count}</b></div>
+          <div class="kpi k-cash"><span>Cash</span><b>${m(sm.cash)}</b></div>
+          <div class="kpi k-upi"><span>UPI / GPay</span><b>${m(sm.upi)}</b></div>
+        </div>
+        <div class="split"><i class="sc" style="width:${pct}%"></i><i class="su" style="width:${sm.total>0?100-pct:0}%"></i></div>
+        <div class="split-l"><span>Cash ${pct}%</span><span>UPI ${sm.total>0?100-pct:0}%</span></div>
+
+        <h2>Sales ledger</h2>${ledger}
+
+        <h2>Bills ledger</h2>
+        <table>
+          <thead><tr><th class="c">#</th><th>Bill</th><th>Time</th><th>Table</th><th class="c">Mode</th><th class="r">Cash</th><th class="r">UPI</th><th class="r">Amount</th></tr></thead>
+          <tbody>${billRows || `<tr><td colspan="8" class="c mut">No sales in this business day</td></tr>`}</tbody>
+          ${orders.length ? `<tfoot><tr><td colspan="5">TOTAL</td><td class="r">${m(sm.cash)}</td><td class="r">${m(sm.upi)}</td><td class="r">${m(sm.total)}</td></tr></tfoot>` : ""}
+        </table>
+
+        ${itemNames.length ? `<h2>Items sold</h2>
+        <table>
+          <thead><tr><th class="c">#</th><th>Item</th><th class="c">Qty</th><th class="r">Amount${sm.discount>0?" (before discount)":""}</th></tr></thead>
+          <tbody>${itemRows}</tbody>
+          <tfoot><tr><td colspan="2">TOTAL</td><td class="c">${itemQty}</td><td class="r">${m(itemAmt)}</td></tr></tfoot>
+        </table>` : ""}
+
+        <div class="sig"><div>Prepared by</div><div>Checked by</div><div>Owner</div></div>
+        <div class="foot">Generated ${fmtDateTime(Date.now())} · ${escapeHtml(cfg.cafeName || "Cafe")} POS</div>
+      </div>
+    </div>`;
+  }
+  function downloadClosingLedger(dayId){
+    const day = (state.config.businessDays||[]).find(d=>d.id===dayId);
+    if(!day){ showToast("Business day not found"); return; }
+    printReportHtml(buildClosingLedgerHtml(day), "Closing Ledger " + dayDateStr(day), LEDGER_CSS);
+  }
+
   function shareClosing(dayId){
     const day = (state.config.businessDays||[]).find(d=>d.id===dayId);
     if(!day){ showToast("Business day not found"); return; }
@@ -3350,8 +3492,8 @@
   // Used by downloadBusinessDayPdf: hands the doc to the native Android print
   // plugin when present, otherwise opens it in a new tab and triggers that
   // tab's own print dialog (the route to the browser's built-in "Save as PDF").
-  function printReportHtml(html, jobName){
-    const fullHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${jobName}</title><style>${REPORT_PRINT_CSS}</style></head><body>${html}</body></html>`;
+  function printReportHtml(html, jobName, css){
+    const fullHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${jobName}</title><style>${css || REPORT_PRINT_CSS}</style></head><body>${html}</body></html>`;
     const KaapiPrint = nativePrintPlugin();
     if(KaapiPrint){
       KaapiPrint.printHtml({html: fullHtml, jobName}).catch(e=>{
@@ -4389,6 +4531,8 @@
     const editOn = t.closest("[data-edit-online]");
     if(editOn){ const o = onlineList().find(x => x.id === editOn.dataset.editOnline); if(o) openModal("onlineSale", Object.assign({}, o)); return true; }
     if(t.closest("[data-toggle-online-all]")){ state.onlineAll = !state.onlineAll; render(); return true; }
+    const dlCl = t.closest("[data-download-closing]");
+    if(dlCl){ downloadClosingLedger(dlCl.dataset.downloadClosing); return true; }
     const shareCl = t.closest("[data-share-closing]");
     if(shareCl){ shareClosing(shareCl.dataset.shareClosing); return true; }
     if(t.closest("[data-save-stock]")){ saveStockSheet(); return true; }
