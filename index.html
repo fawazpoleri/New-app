@@ -546,7 +546,6 @@
     <button class="navbtn" data-tab="kot" id="navKot"><span class="nav-icon-wrap"><span class="icon">🍳</span><span id="kotNavDot" class="navdot" style="display:none;">0</span></span><span class="navlabel">Kitchen</span></button>
     <button class="navbtn" data-tab="bills" id="navBills"><span class="icon">🧾</span><span class="navlabel">Bills</span></button>
     <button class="navbtn" data-tab="reports" id="navReports" style="display:none;"><span class="icon">📊</span><span class="navlabel">Reports</span></button>
-    <button class="navbtn" data-tab="closing" id="navClosing" style="display:none;"><span class="icon">📒</span><span class="navlabel">Closing</span></button>
     <button class="navbtn" data-tab="stock" id="navStock" style="display:none;"><span class="icon">📦</span><span class="navlabel">Stock</span></button>
     <button class="navbtn" data-tab="suppliers" id="navSuppliers" style="display:none;"><span class="icon">🏪</span><span class="navlabel">Suppliers</span></button>
   </nav>
@@ -1024,7 +1023,9 @@
       deletedTableIds: [],
       deletedBusinessDayIds: [],
       ingredients: [],
-      deletedIngredientIds: []
+      deletedIngredientIds: [],
+      onlineSales: [],
+      deletedOnlineSaleIds: []
     };
   }
 
@@ -1041,7 +1042,6 @@
     activeTableId: null,
     billingCategoryFilter: "all",
     reportRange: "day",        // "day" = single business day, "month" = Monthly (from/to business day)
-    closeBizDayId: null,       // Closing tab: null = always follow the latest business day
     reportBizDayId: null,      // Business day report: null = always follow the latest business day
     reportFromId: null,        // Monthly report: first business day (null = start of latest month)
     reportToId: null,          // Monthly report: last business day (null = latest)
@@ -1090,12 +1090,11 @@
     state.role = "user";
     try{ sessionStorage.removeItem(ADMIN_SESSION_KEY); }catch(e){}
     // Bounce back to the till if a restricted screen was open when logging out.
-    if(state.tab === "menu" || state.tab === "stock" || state.tab === "reports" || state.tab === "closing" || state.tab === "suppliers") state.tab = "tables";
+    if(state.tab === "menu" || state.tab === "stock" || state.tab === "reports" || state.tab === "suppliers") state.tab = "tables";
     if(window.SupplierUI) window.SupplierUI.reset();
     if(window.Suppliers) window.Suppliers.reset();   // never leave supplier data cached after logout
     state.reportRange = "day";
     state.reportBizDayId = null;
-    state.closeBizDayId = null;
     state.reportFromId = null;
     state.reportToId = null;
     state.expandedOrderId = null;
@@ -1620,6 +1619,9 @@
     const delIng = Array.from(new Set([...(local.deletedIngredientIds||[]), ...(cloud.deletedIngredientIds||[])]));
     merged.ingredients = mergeConfigRecords(local.ingredients, cloud.ingredients, delIng);
     merged.deletedIngredientIds = delIng;
+    const delOnline = Array.from(new Set([...(local.deletedOnlineSaleIds||[]), ...(cloud.deletedOnlineSaleIds||[])]));
+    merged.onlineSales = mergeConfigRecords(local.onlineSales, cloud.onlineSales, delOnline);
+    merged.deletedOnlineSaleIds = delOnline;
     return merged;
   }
 
@@ -1758,6 +1760,8 @@
     if(!cfg.deletedBusinessDayIds){ cfg.deletedBusinessDayIds = []; needsSave = true; }
     if(!cfg.ingredients){ cfg.ingredients = []; needsSave = true; }
     if(!cfg.deletedIngredientIds){ cfg.deletedIngredientIds = []; needsSave = true; }
+    if(!cfg.onlineSales){ cfg.onlineSales = []; needsSave = true; }
+    if(!cfg.deletedOnlineSaleIds){ cfg.deletedOnlineSaleIds = []; needsSave = true; }
     if(needsSave) await storeSet("cafe-config", cfg);
     cfg.categories = sortCategoriesByOrder(cfg.categories);
     state.config = cfg;
@@ -1896,16 +1900,15 @@
     // Menu/Settings is admin-only — if a session logged out (or never was admin)
     // while sitting on it, bounce back to the till. Kitchen is open to everyone.
     // Normal staff: Tables + Kitchen only. Reports, Menu and Stock are admin-only.
-    if(!isAdmin() && (state.tab === "menu" || state.tab === "stock" || state.tab === "reports" || state.tab === "closing" || state.tab === "suppliers")) state.tab = "tables";
+    if(!isAdmin() && (state.tab === "menu" || state.tab === "stock" || state.tab === "reports" || state.tab === "suppliers")) state.tab = "tables";
     document.getElementById("navSuppliers").style.display = isAdmin() ? "" : "none";
     document.getElementById("navStock").style.display = isAdmin() ? "" : "none";
     document.getElementById("navReports").style.display = isAdmin() ? "" : "none";
-    document.getElementById("navClosing").style.display = isAdmin() ? "" : "none";
 
     document.querySelectorAll(".navbtn").forEach(b=>{
       b.classList.toggle("active", b.dataset.tab === state.tab);
     });
-    const names = {tables:"Tables", menu:"Menu", reports:"Reports", closing:"Closing", kot:"Kitchen", stock:"Stock", bills:"Bills", suppliers:"Suppliers"};
+    const names = {tables:"Tables", menu:"Menu", reports:"Reports", kot:"Kitchen", stock:"Stock", bills:"Bills", suppliers:"Suppliers"};
     document.getElementById("tabName").textContent = names[state.tab];
     document.getElementById("headerMenuBtn").style.display = (isAdmin() && state.tab === "reports") ? "flex" : "none";
     const authBtn = document.getElementById("authBtn");
@@ -1916,7 +1919,6 @@
     if(state.tab === "tables") view.innerHTML = renderTablesTab();
     else if(state.tab === "menu") view.innerHTML = renderMenuTab();
     else if(state.tab === "reports") view.innerHTML = renderReportsTab();
-    else if(state.tab === "closing") view.innerHTML = renderClosingTab();
     else if(state.tab === "bills") view.innerHTML = renderBillsTab();
     else if(state.tab === "kot") view.innerHTML = renderKotTab();
     else if(state.tab === "stock") view.innerHTML = renderStockTab();
@@ -2391,15 +2393,17 @@
 
   function renderReportsTab(){
     const days = sortedBusinessDays();
-    const mode = state.reportRange === "month" ? "month" : "day";
+    const mode = (state.reportRange === "month" || state.reportRange === "closing") ? state.reportRange : "day";
     const switcher = `
       <div class="segmented">
         <button data-report-range="day" class="${mode==="day"?"active":""}">Business day</button>
         <button data-report-range="month" class="${mode==="month"?"active":""}">Monthly</button>
+        <button data-report-range="closing" class="${mode==="closing"?"active":""}">Closing</button>
       </div>`;
     if(!days.length){
       return switcher + emptyState("📊","No business days yet","A business day opens automatically with the first sale.");
     }
+    if(mode === "closing") return switcher + renderClosingReport(days);
     return switcher + (mode === "day" ? renderDayReport(days) : renderRangeReport(days));
   }
 
@@ -2477,40 +2481,32 @@
     return `<div class="cat-chip-header">Business days · tap to open</div>${html}${toggle}`;
   }
 
-  /* ============ CLOSING tab (daily closing report) ============
-     One business day at a time: orders, cash, UPI, POS total, plus OPTIONAL online-platform
-     sales (Swiggy / Zomato) typed in by the owner — those aren't rung through the till, so
-     they're stored on the business day itself (day.online) and sync with the rest of the
-     config. Blank = 0 = hidden from the shared/printed report. */
-  function dayOnline(day){
-    const o = (day && day.online) || {};
-    const swiggy = Math.max(0, Number(o.swiggy)||0), zomato = Math.max(0, Number(o.zomato)||0);
-    return {swiggy, zomato, total: swiggy + zomato};
-  }
-  function selectedClosingDay(){
-    const days = state.config.businessDays || [];
-    if(state.closeBizDayId){
-      const found = days.find(d=>d.id===state.closeBizDayId);
-      if(found) return found;
-    }
-    return getLastBusinessDay();
-  }
-  function setClosingDay(id){
-    const last = getLastBusinessDay();
-    state.closeBizDayId = (last && last.id === id) ? null : id;
-  }
-  function closingNumbers(day){
-    const sm = summarize(ordersInDays([day]));
-    const on = dayOnline(day);
-    return {sm, on, grand: sm.total + on.total};
-  }
+  /* ============ Closing (sub-tab of Reports) ============
+     Daily closing summary for one business day: orders, cash, UPI, POS total.
+     Online sales (Swiggy + Zomato combined) are kept SEPARATE from POS sales: they are
+     entered as one amount over a sale-date range (config.onlineSales: [{id, from, to,
+     amount, updatedAt}], dates as YYYY-MM-DD) and are never added into the POS total. */
+  function fmtYmd(v){ if(!v) return "—"; const [y,m,d] = v.split("-"); return d+"/"+m+"/"+y; }
   function r2(n){ return Math.round((Number(n)||0)*100)/100; }
-  function renderClosingTab(){
-    const days = sortedBusinessDays();
-    if(!days.length) return emptyState("📒","No business days yet","A business day opens automatically with the first sale.");
-    const day = selectedClosingDay();
+  function onlineList(){ return state.config.onlineSales || (state.config.onlineSales = []); }
+  function dayDateStr(day){ return todayStr(new Date(day.openedAt)); }
+  function onlineForDay(day){
+    const ds = dayDateStr(day);
+    return onlineList().filter(o => o.from <= ds && ds <= o.to)
+      .sort((a,b)=> (b.to||"").localeCompare(a.to||"") || b.updatedAt - a.updatedAt);
+  }
+  function onlineRowHtml(o){
+    const range = o.from === o.to ? fmtYmd(o.from) : fmtYmd(o.from)+" – "+fmtYmd(o.to);
+    return `<div class="order-row tappable" data-edit-online="${o.id}">
+      <div class="otop">
+        <div><div class="oleft">${range}</div><div class="otime">Swiggy + Zomato</div></div>
+        <span class="day-total">${money(r2(o.amount))}</span>
+      </div></div>`;
+  }
+  function renderClosingReport(days){
+    const day = selectedBusinessDay();
     const isOpen = !day.closedAt;
-    const {sm, on, grand} = closingNumbers(day);
+    const sm = summarize(ordersInDays([day]));
     const banner = `
       <div class="daybanner ${isOpen?"open":""}">
         <div class="db-info">
@@ -2525,31 +2521,26 @@
         <div class="stat-card"><div class="slabel">💵 Cash sale</div><div class="sval">${money(r2(sm.cash))}</div></div>
         <div class="stat-card"><div class="slabel">📱 UPI sale</div><div class="sval">${money(r2(sm.upi))}</div></div>
         <div class="stat-card"><div class="slabel">Orders</div><div class="sval">${sm.count}</div></div>
-        <div class="stat-card"><div class="slabel">POS total</div><div class="sval">${money(r2(sm.total))}</div></div>
+        <div class="stat-card accent"><div class="slabel">Total sale (POS)</div><div class="sval">${money(r2(sm.total))}</div></div>
         ${sm.discount > 0 ? `<div class="stat-card wide"><div class="slabel">Discounts given</div><div class="sval">${money(r2(sm.discount))}</div></div>` : ""}
       </div>`;
+    const list = state.onlineAll ? onlineList().slice().sort((a,b)=>(b.to||"").localeCompare(a.to||"") || b.updatedAt - a.updatedAt) : onlineForDay(day);
+    const onTotal = list.reduce((t,o)=>t+(Number(o.amount)||0),0);
     const online = `
-      <div class="cat-chip-header">Online sales <span style="text-transform:none; letter-spacing:0; font-weight:500;">(optional)</span></div>
-      <div class="field"><label for="clSwiggy">🛵 Swiggy</label>
-        <input type="number" inputmode="decimal" min="0" step="any" id="clSwiggy" data-online="swiggy" data-day="${day.id}" value="${on.swiggy || ""}" placeholder="0"></div>
-      <div class="field"><label for="clZomato">🍽️ Zomato</label>
-        <input type="number" inputmode="decimal" min="0" step="any" id="clZomato" data-online="zomato" data-day="${day.id}" value="${on.zomato || ""}" placeholder="0"></div>
-      <div class="r-row" style="margin-bottom:12px;"><span>Online total</span><span id="clOnline">${money(r2(on.total))}</span></div>`;
-    const grandCard = `
-      <div class="stat-grid"><div class="stat-card accent wide"><div class="slabel">Total sale (POS + online)</div><div class="sval" id="clGrand">${money(r2(grand))}</div></div></div>`;
+      <div class="cat-chip-header">Online sales · Swiggy + Zomato <span style="text-transform:none; letter-spacing:0; font-weight:500;">(separate, not in POS total)</span></div>
+      ${list.length ? list.map(onlineRowHtml).join("") : `<div class="range-note">${state.onlineAll ? "No online sales added yet." : "No online sales for this day."}</div>`}
+      ${list.length ? `<div class="r-row r-bold" style="margin:8px 0 10px;"><span>Online total${state.onlineAll ? " (all entries)" : ""}</span><span>${money(r2(onTotal))}</span></div>` : ""}
+      <button class="btn btn-outline btn-block" data-add-online="${dayDateStr(day)}">+ Add online sale</button>
+      <button class="btn btn-outline btn-block" style="margin-top:8px;" data-toggle-online-all>${state.onlineAll ? "Show only this day" : "Show all online entries"}</button>`;
     const actions = `
+      <div class="cat-chip-header">Actions</div>
       <button class="btn btn-amber btn-block" data-share-closing="${day.id}">📤 Share on WhatsApp</button>
       <button class="btn btn-outline btn-block" style="margin-top:8px;" data-download-bizday="${day.id}">⬇️ Download PDF</button>
       <button class="btn btn-outline btn-block" style="margin-top:8px;" data-view-day-bills="${day.id}">🧾 View bills of this day</button>`;
-    return dayPickerHtml(days, day, "closeDaySelect", "data-close-step") + banner + stats + online + grandCard + actions;
-  }
-  function updateClosingTotals(day){
-    const {on, grand} = closingNumbers(day);
-    const set = (id,v)=>{ const el = document.getElementById(id); if(el) el.textContent = money(r2(v)); };
-    set("clOnline", on.total); set("clGrand", grand);
+    return dayPickerHtml(days, day, "bizDaySelect", "data-day-step") + banner + stats + online + actions;
   }
   function buildClosingShareText(day){
-    const {sm, on, grand} = closingNumbers(day);
+    const sm = summarize(ordersInDays([day]));
     const cfg = state.config.settings || {};
     const d = new Date(day.openedAt);
     const dateTxt = String(d.getDate()).padStart(2,"0")+" / "+String(d.getMonth()+1).padStart(2,"0")+" / "+d.getFullYear();
@@ -2562,16 +2553,15 @@
       "Orders: "+sm.count,
       "💵 Cash sale: "+money(r2(sm.cash)),
       "📱 UPI sale: "+money(r2(sm.upi)),
-      "🏪 POS total: "+money(r2(sm.total))
+      "💰 *TOTAL SALE (POS): "+money(r2(sm.total))+"*"
     ];
     if(sm.discount > 0) lines.push("🏷️ Discounts given: "+money(r2(sm.discount)));
-    if(on.total > 0){
-      lines.push("");
-      if(on.swiggy > 0) lines.push("🛵 Swiggy: "+money(r2(on.swiggy)));
-      if(on.zomato > 0) lines.push("🍽️ Zomato: "+money(r2(on.zomato)));
-      lines.push("🌐 Online total: "+money(r2(on.total)));
+    const on = onlineForDay(day);
+    if(on.length){
+      lines.push("", "🌐 *ONLINE SALES (Swiggy + Zomato)*");
+      on.forEach(o => lines.push((o.from===o.to ? fmtYmd(o.from) : fmtYmd(o.from)+" – "+fmtYmd(o.to))+": "+money(r2(o.amount))));
+      if(on.length > 1) lines.push("Online total: "+money(r2(on.reduce((t,o)=>t+(Number(o.amount)||0),0))));
     }
-    lines.push("", "💰 *TOTAL SALE: "+money(r2(grand))+"*");
     return lines.join("\n");
   }
   function shareClosing(dayId){
@@ -3290,7 +3280,7 @@
   function buildBusinessDayPdfHtml(day){
     const dOrders = ordersInDays([day]).reverse(); // oldest first
     const {total:dTotal, cash:dCash, upi:dUpi} = summarize(dOrders);
-    const dOnline = dayOnline(day);
+    const dOnline = onlineForDay(day);
 
     const itemTotals = {};
     dOrders.forEach(o=> o.items.forEach(l=>{ itemTotals[l.name] = (itemTotals[l.name]||0) + l.qty; }));
@@ -3331,10 +3321,10 @@
       <div class="rp-section-title">Closing summary</div>
       <div class="rp-row"><span>Cash sale</span><span>${money(r2(dCash))}</span></div>
       <div class="rp-row"><span>UPI sale</span><span>${money(r2(dUpi))}</span></div>
-      <div class="rp-row"><span>POS total</span><span>${money(r2(dTotal))}</span></div>
-      ${dOnline.swiggy > 0 ? `<div class="rp-row"><span>Swiggy</span><span>${money(r2(dOnline.swiggy))}</span></div>` : ""}
-      ${dOnline.zomato > 0 ? `<div class="rp-row"><span>Zomato</span><span>${money(r2(dOnline.zomato))}</span></div>` : ""}
-      ${dOnline.total > 0 ? `<div class="rp-row bold"><span>Total sale (POS + online)</span><span>${money(r2(dTotal + dOnline.total))}</span></div>` : ""}
+      <div class="rp-row bold"><span>Total sale (POS)</span><span>${money(r2(dTotal))}</span></div>
+      ${dOnline.length ? `<div class="rp-section-title">Online sales (Swiggy + Zomato) — separate from POS</div>
+        ${dOnline.map(o=>`<div class="rp-row"><span>${o.from===o.to ? fmtYmd(o.from) : fmtYmd(o.from)+" – "+fmtYmd(o.to)}</span><span>${money(r2(o.amount))}</span></div>`).join("")}
+        ${dOnline.length > 1 ? `<div class="rp-row bold"><span>Online total</span><span>${money(r2(dOnline.reduce((t,o)=>t+(Number(o.amount)||0),0)))}</span></div>` : ""}` : ""}
       <div class="rp-section-title">Items sold</div>
       ${itemRows}
       <div class="rp-section-title">Items not sold</div>
@@ -3857,10 +3847,7 @@
         <div class="r-row r-bold" style="margin-bottom:4px;"><span>Orders</span><span>${dayOrders.length}</span></div>
         <div class="r-row"><span>Cash</span><span>${money(dCash)}</span></div>
         <div class="r-row"><span>UPI</span><span>${money(dUpi)}</span></div>
-        <div class="r-row r-bold" style="margin-top:4px;"><span>Total sales</span><span>${money(dTotal)}</span></div>
-        ${(()=>{ const on = dayOnline((state.config.businessDays||[]).find(d=>d.id===data.dayId)); return on.total > 0
-          ? `<div class="r-row"><span>Online (Swiggy/Zomato)</span><span>${money(r2(on.total))}</span></div>
-             <div class="r-row r-bold"><span>Total incl. online</span><span>${money(r2(dTotal + on.total))}</span></div>` : ""; })()}`;
+        <div class="r-row r-bold" style="margin-top:4px;"><span>Total sales</span><span>${money(dTotal)}</span></div>`;
       saveLabel = "Close day";
     }
 
@@ -4282,6 +4269,16 @@
           ${data.id ? `<button class="btn btn-danger btn-block" data-del-ingredient="${data.id}" style="margin-bottom:4px;">🗑️ Delete item</button>` : ""}`
       };
     }
+    if(type === "onlineSale"){
+      return {
+        title: data.id ? "Edit online sale" : "Add online sale",
+        fields: `
+          <div class="field"><label>Sale date — from</label><input type="date" id="mOnFrom" value="${escapeHtml(data.from||todayStr())}"></div>
+          <div class="field"><label>Sale date — to</label><input type="date" id="mOnTo" value="${escapeHtml(data.to||data.from||todayStr())}"></div>
+          <div class="field"><label>Online sale, Swiggy + Zomato (₹)</label><input type="number" inputmode="decimal" min="0" step="any" id="mOnAmt" value="${data.amount!==undefined?data.amount:""}" placeholder="e.g. 1500"></div>
+          ${data.id ? `<button class="btn btn-danger btn-block" data-del-online="${data.id}" style="margin-bottom:4px;">🗑️ Delete entry</button>` : ""}`
+      };
+    }
     if(type === "starterIngs"){
       const n = Object.values(STARTER_STOCK).reduce((s,a)=>s+a.length,0);
       return {title:"Load starter list", saveLabel:"Add them",
@@ -4314,6 +4311,20 @@
       }
       return "ok";
     }
+    if(type === "onlineSale"){
+      const from = document.getElementById("mOnFrom").value, to = document.getElementById("mOnTo").value;
+      const amount = Number(document.getElementById("mOnAmt").value);
+      if(!from || !to){ showToast("Pick the from and to dates"); return "invalid"; }
+      if(from > to){ showToast("'From' date must be on or before 'To' date"); return "invalid"; }
+      if(!(amount > 0)){ showToast("Enter the online sale amount"); return "invalid"; }
+      if(data.id){
+        const o = onlineList().find(x => x.id === data.id);
+        if(o){ o.from = from; o.to = to; o.amount = amount; o.updatedAt = now; }
+      } else {
+        onlineList().push({id: uid(), from, to, amount, updatedAt: now});
+      }
+      return "ok";
+    }
     if(type === "starterIngs"){
       const byName = new Map(ingList().map(i => [i.name.toLowerCase(), i]));
       let added = 0;
@@ -4341,6 +4352,15 @@
       copyText(buildOrderText()).then(ok => showToast(ok ? "Order list copied" : "Couldn't copy — long-press the text to copy"));
       return true;
     }
+    const delOn = e.target.closest("[data-del-online]");
+    if(delOn){
+      const id = delOn.dataset.delOnline;
+      state.config.onlineSales = onlineList().filter(o => o.id !== id);
+      tombstone("deletedOnlineSaleIds", id);
+      persistConfig(); render(); closeTopOverlay();
+      showToast("Entry deleted");
+      return true;
+    }
     const del = e.target.closest("[data-del-ingredient]");
     if(!del) return false;
     const id = del.dataset.delIngredient;
@@ -4352,6 +4372,13 @@
   }
   function inventoryViewClick(e){
     const t = e.target;
+    const addOn = t.closest("[data-add-online]");
+    if(addOn){ openModal("onlineSale", {from: addOn.dataset.addOnline, to: addOn.dataset.addOnline}); return true; }
+    const editOn = t.closest("[data-edit-online]");
+    if(editOn){ const o = onlineList().find(x => x.id === editOn.dataset.editOnline); if(o) openModal("onlineSale", Object.assign({}, o)); return true; }
+    if(t.closest("[data-toggle-online-all]")){ state.onlineAll = !state.onlineAll; render(); return true; }
+    const shareCl = t.closest("[data-share-closing]");
+    if(shareCl){ shareClosing(shareCl.dataset.shareClosing); return true; }
     if(t.closest("[data-save-stock]")){ saveStockSheet(); return true; }
     const add = t.closest("[data-add-ingredient]");
     if(add){ openModal("ingredient", add.dataset.addIngredient ? {cat: add.dataset.addIngredient} : {}); return true; }
@@ -4510,15 +4537,6 @@
       if(next){ setReportDay(next.id); render(); }
       return;
     }
-    const closeStepBtn = e.target.closest("[data-close-step]");
-    if(closeStepBtn){
-      if(closeStepBtn.disabled) return;
-      const next = stepDay(selectedClosingDay(), Number(closeStepBtn.dataset.closeStep));
-      if(next){ setClosingDay(next.id); render(); }
-      return;
-    }
-    const shareClosingBtn = e.target.closest("[data-share-closing]");
-    if(shareClosingBtn){ shareClosing(shareClosingBtn.dataset.shareClosing); return; }
     const billsStepBtn = e.target.closest("[data-bills-step]");
     if(billsStepBtn){
       if(billsStepBtn.disabled) return;
@@ -4635,38 +4653,10 @@
       setReportDay(e.target.value);
       render();
     }
-    if(e.target && e.target.id === "closeDaySelect"){
-      setClosingDay(e.target.value);
-      render();
-    }
     if(e.target && e.target.id === "billsDaySelect"){
       setBillsDay(e.target.value);
       render();
     }
-  });
-  // Closing tab: Swiggy / Zomato amounts. Totals update live; the day is saved (and synced)
-  // once the field is left, not on every keystroke.
-  function onlineInputDay(el){
-    return (state.config.businessDays||[]).find(d=>d.id===el.dataset.day);
-  }
-  document.addEventListener("input", (e)=>{
-    const el = e.target && e.target.closest && e.target.closest("[data-online]");
-    if(!el) return;
-    const day = onlineInputDay(el); if(!day) return;
-    day.online = Object.assign({}, day.online);
-    day.online[el.dataset.online] = Math.max(0, Number(el.value)||0);
-    updateClosingTotals(day);
-  });
-  document.addEventListener("change", (e)=>{
-    const el = e.target && e.target.closest && e.target.closest("[data-online]");
-    if(!el) return;
-    const day = onlineInputDay(el); if(!day) return;
-    day.online = Object.assign({}, day.online);
-    day.online[el.dataset.online] = Math.max(0, Number(el.value)||0);
-    day.updatedAt = Date.now();
-    persistConfig();
-    updateClosingTotals(day);
-    showToast("Online sales saved");
   });
   // Bills search: refresh only the list so the keyboard/focus isn't lost while typing.
   document.addEventListener("input", (e)=>{
