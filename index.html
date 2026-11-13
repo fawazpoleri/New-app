@@ -2492,6 +2492,7 @@
      entered as one amount over a sale-date range (config.onlineSales: [{id, from, to,
      amount, updatedAt}], dates as YYYY-MM-DD) and are never added into the POS total. */
   function fmtYmd(v){ if(!v) return "—"; const [y,m,d] = v.split("-"); return d+"/"+m+"/"+y; }
+  function mNet(n){ return (n < 0 ? "-" : "") + money(r2(Math.abs(n))); }
   function r2(n){ return Math.round((Number(n)||0)*100)/100; }
   function platLabel(p){ return p === "swiggy" ? "Swiggy" : p === "zomato" ? "Zomato" : "Online"; }
   function fmtSp(v){ if(!v) return "—"; const [y,m,d] = v.split("-"); return d+"/ "+m+"/ "+y; }
@@ -2559,7 +2560,7 @@
     const exps = expenseForDay(day);
     const expense = `
       <div class="cat-chip-header">Expenses <span style="text-transform:none; letter-spacing:0; font-weight:500;">(optional)</span></div>
-      ${exps.length ? exps.map(expenseRowHtml).join("") + `<div class="r-row r-bold" style="margin:8px 0 10px;"><span>Total expenses</span><span>${money(r2(expenseTotal(exps)))}</span></div>` : `<div class="range-note">No expenses for this day.</div>`}
+      ${exps.length ? exps.map(expenseRowHtml).join("") + `<div style="height:10px;"></div>` : `<div class="range-note">No expenses for this day.</div>`}
       <button class="btn btn-outline btn-block" data-add-expense="${day.id}">+ Add expense</button>`;
     const actions = `
       <div class="cat-chip-header">Actions</div>
@@ -2599,10 +2600,8 @@
     lines.push("", bar, "", "💰 *GRAND TOTAL: "+money(r2(sm.total + onTotal))+"*");
     const exps = expenseForDay(day);
     if(exps.length){
-      const eTotal = expenseTotal(exps);
       lines.push("", bar, "", "💸 *EXPENSES*");
       exps.forEach(e => lines.push("• "+(e.note || "Expense")+": "+money(r2(e.amount))));
-      lines.push("*TOTAL EXPENSES: "+money(r2(eTotal))+"*", "", "🧮 *NET (GRAND TOTAL − EXPENSES): "+money(r2(sm.total + onTotal - eTotal))+"*");
     }
     return lines.join("\n");
   }
@@ -2691,7 +2690,6 @@
     }).join("");
 
     const exps = expenseForDay(day);
-    const eTotal = expenseTotal(exps);
     const expRows = exps.map(e => `<tr><td>${escapeHtml(e.note || "Expense")}</td><td class="mut">Business day expense</td><td class="r">${m(e.amount)}</td></tr>`).join("");
     // sales ledger
     const onRows = on.slice().sort((a,b)=>String(a.platform||"z").localeCompare(String(b.platform||"z"))).map(o => `<tr><td>${platLabel(o.platform)} sales</td><td class="mut">${o.from===o.to ? fmtYmd(o.from) : fmtYmd(o.from)+" → "+fmtYmd(o.to)}</td><td class="r">${m(o.amount)}</td></tr>`).join("");
@@ -2708,8 +2706,7 @@
           <tr class="sub on"><td colspan="2">Total online sales</td><td class="r">${m(onTotal)}</td></tr>` : ""}
           <tr class="grand"><td colspan="2">GRAND TOTAL</td><td class="r">${m(sm.total + onTotal)}</td></tr>
           ${exps.length ? `<tr class="band ex"><td colspan="3">Expenses</td></tr>${expRows}
-          <tr class="sub ex"><td colspan="2">Total expenses</td><td class="r">${m(eTotal)}</td></tr>
-          <tr class="net"><td colspan="2">NET (Grand total − Expenses)</td><td class="r">${m(sm.total + onTotal - eTotal)}</td></tr>` : ""}
+` : ""}
         </tbody>
       </table>`;
 
