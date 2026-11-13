@@ -2486,6 +2486,8 @@
      amount, updatedAt}], dates as YYYY-MM-DD) and are never added into the POS total. */
   function fmtYmd(v){ if(!v) return "—"; const [y,m,d] = v.split("-"); return d+"/"+m+"/"+y; }
   function r2(n){ return Math.round((Number(n)||0)*100)/100; }
+  function platLabel(p){ return p === "swiggy" ? "Swiggy" : p === "zomato" ? "Zomato" : "Online"; }
+  function fmtSp(v){ if(!v) return "—"; const [y,m,d] = v.split("-"); return d+"/ "+m+"/ "+y; }
   function onlineList(){ return state.config.onlineSales || (state.config.onlineSales = []); }
   function dayDateStr(day){ return todayStr(new Date(day.openedAt)); }
   function onlineForDay(day){
@@ -2497,7 +2499,7 @@
     const range = o.from === o.to ? fmtYmd(o.from) : fmtYmd(o.from)+" – "+fmtYmd(o.to);
     return `<div class="order-row tappable" data-edit-online="${o.id}">
       <div class="otop">
-        <div><div class="oleft">${range}</div><div class="otime">Swiggy + Zomato</div></div>
+        <div><div class="oleft">${range}</div><div class="otime">${platLabel(o.platform)}</div></div>
         <span class="day-total">${money(r2(o.amount))}</span>
       </div></div>`;
   }
@@ -2525,7 +2527,7 @@
     const list = state.onlineAll ? onlineList().slice().sort((a,b)=>(b.to||"").localeCompare(a.to||"") || b.updatedAt - a.updatedAt) : onlineForDay(day);
     const onTotal = list.reduce((t,o)=>t+(Number(o.amount)||0),0);
     const online = `
-      <div class="cat-chip-header">Online sales · Swiggy + Zomato <span style="text-transform:none; letter-spacing:0; font-weight:500;">(separate, not in POS total)</span></div>
+      <div class="cat-chip-header">Online sales · Swiggy / Zomato <span style="text-transform:none; letter-spacing:0; font-weight:500;">(separate, not in POS total)</span></div>
       ${list.length ? list.map(onlineRowHtml).join("") : `<div class="range-note">${state.onlineAll ? "No online sales added yet." : "No online sales for this day."}</div>`}
       ${list.length ? `<div class="r-row r-bold" style="margin:8px 0 10px;"><span>Online total${state.onlineAll ? " (all entries)" : ""}</span><span>${money(r2(onTotal))}</span></div>` : ""}
       <button class="btn btn-outline btn-block" data-add-online="${dayDateStr(day)}">+ Add online sale</button>
@@ -2541,26 +2543,31 @@
   function buildClosingShareText(day){
     const sm = summarize(ordersInDays([day]));
     const cfg = state.config.settings || {};
-    const d = new Date(day.openedAt);
-    const dateTxt = String(d.getDate()).padStart(2,"0")+" / "+String(d.getMonth()+1).padStart(2,"0")+" / "+d.getFullYear();
+    const bar = "━━━━━━━━━━━━━━";
     const lines = [
-      "🧾 *"+(cfg.cafeName || "Cafe").toUpperCase()+" – DAILY CLOSING SUMMARY*",
+      "📊 *"+(cfg.cafeName || "Cafe").toUpperCase()+" – DAILY SALES REPORT*",
       "",
-      "📅 Date: "+dateTxt,
-      day.closedAt ? "🕒 "+fmtDateTime(day.openedAt)+" → "+fmtDateTime(day.closedAt) : "🕒 Open since "+fmtDateTime(day.openedAt),
+      "📅 Report Date: "+fmtSp(dayDateStr(day)),
       "",
-      "Orders: "+sm.count,
-      "💵 Cash sale: "+money(r2(sm.cash)),
-      "📱 UPI sale: "+money(r2(sm.upi)),
-      "💰 *TOTAL SALE (POS): "+money(r2(sm.total))+"*"
+      "🏪 *SHOP SALES*",
+      "💵 Cash: "+money(r2(sm.cash)),
+      "📲 GPay: "+money(r2(sm.upi)),
+      "*Total Shop Sales: "+money(r2(sm.total))+"*"
     ];
-    if(sm.discount > 0) lines.push("🏷️ Discounts given: "+money(r2(sm.discount)));
     const on = onlineForDay(day);
+    let onTotal = 0;
     if(on.length){
-      lines.push("", "🌐 *ONLINE SALES (Swiggy + Zomato)*");
-      on.forEach(o => lines.push((o.from===o.to ? fmtYmd(o.from) : fmtYmd(o.from)+" – "+fmtYmd(o.to))+": "+money(r2(o.amount))));
-      if(on.length > 1) lines.push("Online total: "+money(r2(on.reduce((t,o)=>t+(Number(o.amount)||0),0))));
+      lines.push("", bar, "", "📱 *ONLINE SALES*");
+      [["swiggy","📦 *SWIGGY*"],["zomato","🍽️ *ZOMATO*"],["","🌐 *ONLINE*"]].forEach(([key,head])=>{
+        const list = on.filter(o => key ? o.platform === key : (o.platform !== "swiggy" && o.platform !== "zomato"));
+        list.forEach(o => {
+          onTotal += Number(o.amount)||0;
+          lines.push("", head, "📅 From: "+fmtSp(o.from), "📅 To: "+fmtSp(o.to), "Sales: "+money(r2(o.amount)));
+        });
+      });
+      lines.push("", "*TOTAL ONLINE SALES (SWIGGY+ZOMATO): "+money(r2(onTotal))+"*");
     }
+    lines.push("", bar, "", "💰 *GRAND TOTAL: "+money(r2(sm.total + onTotal))+"*");
     return lines.join("\n");
   }
   function shareClosing(dayId){
@@ -3322,7 +3329,7 @@
       <div class="rp-row"><span>UPI sale</span><span>${money(r2(dUpi))}</span></div>
       <div class="rp-row bold"><span>Total sale (POS)</span><span>${money(r2(dTotal))}</span></div>
       ${dOnline.length ? `<div class="rp-section-title">Online sales (Swiggy + Zomato) — separate from POS</div>
-        ${dOnline.map(o=>`<div class="rp-row"><span>${o.from===o.to ? fmtYmd(o.from) : fmtYmd(o.from)+" – "+fmtYmd(o.to)}</span><span>${money(r2(o.amount))}</span></div>`).join("")}
+        ${dOnline.map(o=>`<div class="rp-row"><span>${platLabel(o.platform)} · ${o.from===o.to ? fmtYmd(o.from) : fmtYmd(o.from)+" – "+fmtYmd(o.to)}</span><span>${money(r2(o.amount))}</span></div>`).join("")}
         ${dOnline.length > 1 ? `<div class="rp-row bold"><span>Online total</span><span>${money(r2(dOnline.reduce((t,o)=>t+(Number(o.amount)||0),0)))}</span></div>` : ""}` : ""}
       <div class="rp-section-title">Items sold</div>
       ${itemRows}
@@ -4272,9 +4279,14 @@
       return {
         title: data.id ? "Edit online sale" : "Add online sale",
         fields: `
+          <div class="field"><label>Platform</label>
+            <select id="mOnPlat">
+              <option value="swiggy" ${(data.platform||"swiggy")==="swiggy"?"selected":""}>🛵 Swiggy</option>
+              <option value="zomato" ${data.platform==="zomato"?"selected":""}>🍽️ Zomato</option>
+            </select></div>
           <div class="field"><label>Sale date — from</label><input type="date" id="mOnFrom" value="${escapeHtml(data.from||todayStr())}"></div>
           <div class="field"><label>Sale date — to</label><input type="date" id="mOnTo" value="${escapeHtml(data.to||data.from||todayStr())}"></div>
-          <div class="field"><label>Online sale, Swiggy + Zomato (₹)</label><input type="number" inputmode="decimal" min="0" step="any" id="mOnAmt" value="${data.amount!==undefined?data.amount:""}" placeholder="e.g. 1500"></div>
+          <div class="field"><label>Online sale amount (₹)</label><input type="number" inputmode="decimal" min="0" step="any" id="mOnAmt" value="${data.amount!==undefined?data.amount:""}" placeholder="e.g. 1500"></div>
           ${data.id ? `<button class="btn btn-danger btn-block" data-del-online="${data.id}" style="margin-bottom:4px;">🗑️ Delete entry</button>` : ""}`
       };
     }
@@ -4313,14 +4325,15 @@
     if(type === "onlineSale"){
       const from = document.getElementById("mOnFrom").value, to = document.getElementById("mOnTo").value;
       const amount = Number(document.getElementById("mOnAmt").value);
+      const platform = document.getElementById("mOnPlat").value === "zomato" ? "zomato" : "swiggy";
       if(!from || !to){ showToast("Pick the from and to dates"); return "invalid"; }
       if(from > to){ showToast("'From' date must be on or before 'To' date"); return "invalid"; }
       if(!(amount > 0)){ showToast("Enter the online sale amount"); return "invalid"; }
       if(data.id){
         const o = onlineList().find(x => x.id === data.id);
-        if(o){ o.from = from; o.to = to; o.amount = amount; o.updatedAt = now; }
+        if(o){ o.platform = platform; o.from = from; o.to = to; o.amount = amount; o.updatedAt = now; }
       } else {
-        onlineList().push({id: uid(), from, to, amount, updatedAt: now});
+        onlineList().push({id: uid(), platform, from, to, amount, updatedAt: now});
       }
       return "ok";
     }
