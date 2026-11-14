@@ -1764,6 +1764,10 @@
 
     timerInterval = setInterval(updateLiveTimers, 1000);
     startAutoReload();
+    // Auto backup: shortly after opening, whenever the app returns to the foreground, and every few hours.
+    setTimeout(maybeAutoBackup, 8000);
+    document.addEventListener("visibilitychange", () => { if(!document.hidden) setTimeout(maybeAutoBackup, 4000); });
+    setInterval(maybeAutoBackup, 3 * 3600 * 1000);
   }
 
   /* ============ Cloud sync (manual pull, automatic push) ============
@@ -2204,7 +2208,7 @@
         </div>
       </div>
       <button class="btn btn-outline btn-block" data-connect-printer style="margin-bottom:16px;">🔗 ${s.printerName?"Reconnect printer":"Connect 2\" Bluetooth printer"}</button>
-      <div class="hint-text">🖨️ Turn on <strong>Direct Bluetooth print</strong> and tap connect once to pair your 2-inch thermal printer — KOTs and bills then print straight to it with no dialog or extra app. Needs Chrome on Android. If it's off, unsupported, or the printer isn't connected, printing falls back to the Android print screen — install a free app like <strong>RawBT</strong> from the Play Store and choose it there.</div>`;
+      <div class="hint-text">🖨️ Turn on <strong>Direct Bluetooth print</strong> and tap connect once to pair your 2-inch thermal printer — KOTs and bills then print straight to it with no dialog or extra app. Needs Chrome on Android. If it's off, unsupported, or the printer isn't connected, printing falls back to the Android print screen — install a free app like <strong>RawBT</strong> from the Play Store and choose it there.</div>` + backupCardHtml();
   }
 
   function renderCategoriesList(){
@@ -4399,6 +4403,202 @@
     if(shareCl){ shareClosing(shareCl.dataset.shareClosing); return true; }
     return false;
   }
+  /* ============ Backup & restore (Menu → Settings) ============
+     A backup is one JSON object: the whole config (menu, tables, settings, business days, online
+     sales, expenses…), every bill this device has loaded, and — when present on the device that
+     makes it — the Stock page's item list. Cloud backups live in the same `kv` table as everything
+     else, one slot per weekday (so the last 7 days are kept without ever needing a delete), plus
+     one "before restore" safety slot. Auto backup runs when the app opens / returns to the
+     foreground and the newest cloud backup is more than ~20 hours old.
+     RESTORE replaces menu/tables/settings/business days/online sales/expenses with the backup and
+     adds back any bills that are missing; bills newer than the backup are never deleted. A safety
+     backup of the current data is saved first so a restore can itself be undone. */
+  const BK_INDEX = "cafe-backup-index";
+  const BK_STOCK_KEY = "froolla_catalog_v1";
+  function bkClone(o){ return JSON.parse(JSON.stringify(o)); }
+  function buildBackup(kind){
+    let stock = null;
+    try{ const raw = localStorage.getItem(BK_STOCK_KEY); if(raw) stock = JSON.parse(raw); }catch(e){}
+    return {app:"froolla-pos", v:1, kind, at:new Date().toISOString(), config:bkClone(state.config),
+            orders:bkClone(state.orders), deletedOrderIds:bkClone(state.deletedOrderIds||[]), stockCatalog:stock};
+  }
+  function bkSummary(b){
+    return {at:b.at, kind:b.kind, orders:(b.orders||[]).length, items:((b.config&&b.config.items)||[]).length};
+  }
+  function validBackup(b){
+    return !!(b && typeof b === "object" && b.app === "froolla-pos" && b.config && typeof b.config === "object"
+      && Array.isArray(b.config.categories) && Array.isArray(b.orders));
+  }
+  async function loadBackupIndex(){
+    try{
+      const v = await cloudGet(BK_INDEX);
+      state.backupIndex = (v && typeof v === "object") ? v : {slots:{}, auto:true};
+    }catch(e){ state.backupIndex = "error"; }
+  }
+  async function saveCloudBackup(kind){
+    if(!supabaseClient) throw new Error("Cloud database isn't set up");
+    let idx = null;
+    try{ idx = await cloudGet(BK_INDEX); }catch(e){ /* start a fresh index */ }
+    if(!idx || typeof idx !== "object") idx = {slots:{}, auto:true};
+    const b = buildBackup(kind);
+    const slot = kind === "pre-restore" ? "pre" : String(new Date().getDay());   // 0-6 = weekday
+    await cloudSet("cafe-backup-" + slot, b);
+    idx.slots = idx.slots || {};
+    idx.slots[slot] = bkSummary(b);
+    if(kind !== "pre-restore") idx.lastAt = b.at;
+    await cloudSet(BK_INDEX, idx);
+    state.backupIndex = idx;
+    return b;
+  }
+  let autoBackupRunning = false;
+  async function maybeAutoBackup(){
+    if(autoBackupRunning || !supabaseClient || document.hidden || !state.config || state.backupBusy) return;
+    autoBackupRunning = true;
+    try{
+      const idx = await cloudGet(BK_INDEX);
+      if(idx && idx.auto === false) return;
+      const last = idx && idx.lastAt ? Date.parse(idx.lastAt) : 0;
+      if(Date.now() - last < 20 * 3600 * 1000) return;
+      await saveCloudBackup("auto");
+      if(state.tab === "menu" && state.menuSub === "settings" && !state.modal) render();
+    }catch(e){ console.error("auto backup failed", e); }
+    finally{ autoBackupRunning = false; }
+  }
+  function downloadBackupFile(b){
+    const name = ((state.config.settings && state.config.settings.cafeName) || "cafe").replace(/[^a-z0-9]+/gi,"-").replace(/^-|-$/g,"").toLowerCase() || "cafe";
+    const blob = new Blob([JSON.stringify(b)], {type:"application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name + "-backup-" + b.at.slice(0,10) + ".json";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+  async function backupNow(){
+    if(state.backupBusy) return;
+    state.backupBusy = true;
+    try{
+      showToast("Backing up…");
+      const b = await saveCloudBackup("manual");
+      downloadBackupFile(b);
+      showToast("Backup saved to the cloud and downloaded");
+    }catch(e){
+      console.error("backup failed", e);
+      try{ downloadBackupFile(buildBackup("manual")); showToast("Cloud backup failed — file downloaded instead"); }
+      catch(e2){ showToast("Backup failed"); }
+    }finally{
+      state.backupBusy = false;
+      if(state.tab === "menu" && state.menuSub === "settings" && !state.modal) render();
+    }
+  }
+  async function restoreBackup(b){
+    if(state.backupBusy) return;
+    if(!validBackup(b)){ showToast("That isn't a valid backup file"); return; }
+    const s = bkSummary(b);
+    const when = new Date(b.at).toLocaleString("en-IN", {day:"numeric", month:"short", year:"numeric", hour:"numeric", minute:"2-digit"});
+    const ok = window.confirm("Restore the backup from " + when + "?\n\n" +
+      "• Menu, tables, settings, business days, online sales and expenses will be REPLACED with this backup.\n" +
+      "• " + s.orders + " bills in the backup are added back if they are missing (newer bills are kept).\n\n" +
+      "A safety copy of your current data is saved first.");
+    if(!ok) return;
+    state.backupBusy = true;
+    try{
+      showToast("Restoring…");
+      await saveCloudBackup("pre-restore");
+      const cfg = bkClone(b.config);
+      cfg.categories = sortCategoriesByOrder(cfg.categories);
+      await cloudSet("cafe-config", cfg);
+      await localSet("cafe-config", cfg);
+      let added = 0;
+      if(rowMode){
+        // One row per bill: add back the bills the database no longer has.
+        const loaded = await DBO.loadAll();
+        const have = new Set(loaded.orders.map(o => o.id));
+        const missing = b.orders.filter(o => !have.has(o.id));
+        missing.forEach(o => state.orders.push(bkClone(o)));
+        added = missing.length;
+        if(added) await pushOrders();
+      } else {
+        const cur = await cloudGet("cafe-orders");
+        const list = Array.isArray(cur) ? cur : [];
+        const have = new Set(list.map(o => o.id));
+        const missing = b.orders.filter(o => !have.has(o.id));
+        added = missing.length;
+        if(added) await cloudSet("cafe-orders", [...list, ...missing]);
+        const dead = await cloudGet("cafe-deleted-orders");
+        const back = new Set(missing.map(o => o.id));
+        if(Array.isArray(dead) && dead.some(id => back.has(id))) await cloudSet("cafe-deleted-orders", dead.filter(id => !back.has(id)));
+      }
+      if(b.stockCatalog){ try{ localStorage.setItem(BK_STOCK_KEY, JSON.stringify(b.stockCatalog)); }catch(e){} }
+      showToast("Restored (" + added + " bills added back) — reloading");
+      setTimeout(() => location.reload(), 1200);
+    }catch(e){
+      console.error("restore failed", e);
+      showToast("Restore failed — your data is as it was before (a safety backup was saved)");
+      state.backupBusy = false;
+    }
+  }
+  async function restoreFromSlot(slot){
+    try{
+      const b = await cloudGet("cafe-backup-" + slot);
+      if(!b) { showToast("That backup is no longer available"); return; }
+      await restoreBackup(b);
+    }catch(e){ showToast("Couldn't read that backup"); }
+  }
+  async function toggleAutoBackup(){
+    try{
+      const idx = (await cloudGet(BK_INDEX)) || {slots:{}};
+      idx.auto = idx.auto === false;           // flip: default is ON
+      await cloudSet(BK_INDEX, idx);
+      state.backupIndex = idx;
+      showToast("Auto backup " + (idx.auto ? "on" : "off"));
+      render();
+    }catch(e){ showToast("Couldn't change the setting"); }
+  }
+  const BK_KIND = {auto:"Auto", manual:"Manual", "pre-restore":"Before last restore"};
+  function backupCardHtml(){
+    if(state.backupIndex === undefined){
+      state.backupIndex = "loading";
+      loadBackupIndex().then(() => { if(state.tab === "menu" && state.menuSub === "settings" && !state.modal) render(); });
+    }
+    const idx = state.backupIndex;
+    const ready = idx && typeof idx === "object";
+    const autoOn = !ready || idx.auto !== false;
+    const last = ready && idx.lastAt ? fmtDateTime(Date.parse(idx.lastAt)) : "never";
+    const slots = ready ? Object.keys(idx.slots || {}).map(k => ({slot:k, ...idx.slots[k]})).sort((a,b)=> (b.at||"").localeCompare(a.at||"")) : [];
+    const rows = slots.map(x => `
+      <div class="list-row">
+        <div class="rowmain">
+          <div class="rtitle">${fmtDateTime(Date.parse(x.at))}</div>
+          <div class="rsub">${BK_KIND[x.kind] || "Backup"} · ${x.orders} bills · ${x.items} menu items</div>
+        </div>
+        <div class="ractions"><button class="btn btn-outline" data-restore-slot="${x.slot}" style="padding:8px 12px; font-size:12.5px;">Restore</button></div>
+      </div>`).join("");
+    return `
+      <div class="cat-chip-header" style="margin-top:18px;">Backup &amp; restore</div>
+      <div class="list-row" style="margin-bottom:12px;">
+        <div class="rowmain">
+          <div class="rtitle">🗄️ Auto backup</div>
+          <div class="rsub">Daily to the cloud, last 7 days kept · Last: ${idx === "loading" ? "checking…" : idx === "error" ? "couldn't check" : last}</div>
+        </div>
+        <div class="ractions"><button class="btn ${autoOn?"btn-amber":"btn-outline"}" data-toggle-autobackup style="padding:8px 12px; font-size:12.5px;">${autoOn?"On":"Off"}</button></div>
+      </div>
+      <button class="btn btn-amber btn-block" data-backup-now style="margin-bottom:8px;">💾 Back up now (cloud + download file)</button>
+      <button class="btn btn-outline btn-block" data-restore-file-btn style="margin-bottom:12px;">📂 Restore from a backup file</button>
+      <input type="file" id="restoreFile" accept=".json,application/json" style="display:none;">
+      ${rows ? `<div class="hint-text" style="margin-bottom:8px;">Cloud backups</div>${rows}` : ""}
+      <div class="hint-text">Restore replaces menu, tables, settings, business days, online sales and expenses, and adds back any missing bills. Newer bills are never deleted, and a safety copy is saved first.</div>`;
+  }
+  document.addEventListener("change", (e) => {
+    const el = e.target;
+    if(!el || el.id !== "restoreFile" || !el.files || !el.files[0]) return;
+    const file = el.files[0];
+    el.value = "";
+    const r = new FileReader();
+    r.onload = () => { let b = null; try{ b = JSON.parse(r.result); }catch(err){} restoreBackup(b); };
+    r.onerror = () => showToast("Couldn't read that file");
+    r.readAsText(file);
+  });
+
   /* ============ Event binding ============ */
   function bindStaticEvents(){
     document.querySelectorAll(".navbtn").forEach(b=>{
@@ -4632,6 +4832,11 @@
       return;
     }
 
+    if(e.target.closest("[data-backup-now]")){ backupNow(); return; }
+    if(e.target.closest("[data-toggle-autobackup]")){ toggleAutoBackup(); return; }
+    if(e.target.closest("[data-restore-file-btn]")){ const f = document.getElementById("restoreFile"); if(f) f.click(); return; }
+    const rs = e.target.closest("[data-restore-slot]");
+    if(rs){ restoreFromSlot(rs.dataset.restoreSlot); return; }
     if(e.target.closest("[data-connect-printer]")){
       connectBluetoothPrinter();
       return;
